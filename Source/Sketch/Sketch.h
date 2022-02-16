@@ -16,7 +16,7 @@ public:
     virtual void Update(float dt);
     virtual void Quit();
 
-    void Configurate(std::function<void(sketch::SketchConfig&)> configurator);
+    void Configurate(std::function<void(SketchConfig&)> configurator);
     SketchConfig GetConfig() const;
 
 protected:
