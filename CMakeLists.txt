@@ -76,4 +76,5 @@ function(add_app_in_subdirectory _folder)
 endfunction()
 
 add_lib_in_subdirectory(Source/Launcher)
+add_lib_in_subdirectory(Source/Sketch)
 add_app_in_subdirectory(Source/Examples/DummySketch)
