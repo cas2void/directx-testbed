@@ -1,4 +1,4 @@
-get_filename_component(TARGET_NAME ${CMAKE_CURRENT_SOURCE_DIR} NAME)
+set(TARGET_NAME Ch04_Initialization)
 
 add_executable(${TARGET_NAME})
 target_sources(${TARGET_NAME} PRIVATE SketchApp.cpp)

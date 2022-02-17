@@ -1,12 +1,12 @@
-#include "Sketch.h"
+#include "SketchBase.h"
 #include "Launcher.h"
 
-class DummySketch : public sketch::SketchBase
+class Ch04_Initialization : public sketch::SketchBase
 {
 
 };
 
-CREATE_SKETCH(DummySketch, 
+CREATE_SKETCH(Ch04_Initialization,
     [](sketch::SketchConfig& config)
     {
         config.width = 1280;
