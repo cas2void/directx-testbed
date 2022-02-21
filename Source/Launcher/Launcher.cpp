@@ -1,4 +1,7 @@
 #include "Launcher.h"
+
+#include <stdexcept>
+
 #include "SketchBase.h"
 
 static HWND SMainWindow = nullptr;
@@ -6,7 +9,7 @@ static HWND SMainWindow = nullptr;
 namespace launcher
 {
 
-LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
 	switch (message)
 	{
@@ -19,7 +22,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	return 0;
 }
 
-void Run(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& sketchName, std::function<void(sketch::SketchConfig&)> configurator)
+static void RunInternal(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& sketchName, std::function<void(sketch::SketchConfig&)> configurator)
 {
 	if (configurator)
 	{
@@ -51,7 +54,7 @@ void Run(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& 
 	RECT rc = { 0, 0, (LONG)sketchInstance->GetConfig().width, (LONG)sketchInstance->GetConfig().height };
 	AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
 
-	SMainWindow = CreateWindowW(wcex.lpszClassName, sketchNameWide.c_str(),  WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
+	SMainWindow = CreateWindowW(wcex.lpszClassName, sketchNameWide.c_str(), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
 		rc.right - rc.left, rc.bottom - rc.top, nullptr, nullptr, hInstance, nullptr);
 
 	ShowWindow(SMainWindow, SW_SHOWDEFAULT);
@@ -76,6 +79,22 @@ void Run(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& 
 	} while (TRUE);
 
 	sketchInstance->Quit();
+}
+
+void Run(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& sketchName, std::function<void(sketch::SketchConfig&)> configurator)
+{
+	try
+	{
+		RunInternal(sketchInstance, sketchName, configurator);
+	}
+	catch (const std::runtime_error& e)
+	{
+		std::string errorString(e.what());
+		int count = MultiByteToWideChar(CP_UTF8, 0, errorString.c_str(), (int)errorString.length(), nullptr, 0);
+		std::wstring errorStringWide(count, 0);
+		MultiByteToWideChar(CP_UTF8, 0, errorString.c_str(), (int)errorString.length(), &errorStringWide[0], count);
+		MessageBoxW(nullptr, errorStringWide.c_str(), L"Failed", MB_OK);
+	}
 }
 
 }; // namespace launcher
