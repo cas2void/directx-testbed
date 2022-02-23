@@ -21,6 +21,8 @@ namespace launcher
 void Run(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& sketchName,
     std::function<void(sketch::SketchConfig&)> configurator = std::function<void(sketch::SketchConfig&)>());
 
+HWND GetMainWindow();
+
 }; // namespace launcher
 
 #if NDEBUG

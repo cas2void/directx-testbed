@@ -57,10 +57,10 @@ static void RunInternal(std::shared_ptr<sketch::SketchBase> sketchInstance, cons
 	SMainWindow = CreateWindowW(wcex.lpszClassName, sketchNameWide.c_str(), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
 		rc.right - rc.left, rc.bottom - rc.top, nullptr, nullptr, hInstance, nullptr);
 
+	sketchInstance->Init();
+
 	ShowWindow(SMainWindow, SW_SHOWDEFAULT);
 	UpdateWindow(SMainWindow);
-
-	sketchInstance->Init();
 
 	MSG msg;
 	do
@@ -95,6 +95,11 @@ void Run(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& 
 		MultiByteToWideChar(CP_UTF8, 0, errorString.c_str(), (int)errorString.length(), &errorStringWide[0], count);
 		MessageBoxW(nullptr, errorStringWide.c_str(), L"Failed", MB_OK);
 	}
+}
+
+HWND GetMainWindow()
+{
+	return SMainWindow;
 }
 
 }; // namespace launcher
