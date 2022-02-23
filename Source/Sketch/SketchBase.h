@@ -1,26 +1,28 @@
+#pragma once
+
 #include <functional>
 
 namespace sketch
 {
 
-struct SketchConfig
-{
-    int width = 960;
-    int height = 540;
-};
-
 class SketchBase
 {
 public:
-    virtual void Init();
-    virtual void Update(float dt);
-    virtual void Quit();
+    struct Config
+    {
+        int width = 960;
+        int height = 540;
+    };
 
-    void Configurate(std::function<void(SketchConfig&)> configurator);
-    SketchConfig GetConfig() const;
+    virtual void Init() {}
+    virtual void Update() {}
+    virtual void Quit() {}
+
+    void Configurate(std::function<void(Config&)> configurator);
+    const Config& GetConfig() const;
 
 protected:
-    SketchConfig config_;
+    Config config_;
 };
 
 }; // namespace sketch

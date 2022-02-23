@@ -7,19 +7,13 @@
 #include <string>
 #include <functional>
 
-namespace sketch
-{
-
-struct SketchConfig;
-class SketchBase;
-
-}; // namespace sketch
+#include "SketchBase.h"
 
 namespace launcher
 {
 
 void Run(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& sketchName,
-    std::function<void(sketch::SketchConfig&)> configurator = std::function<void(sketch::SketchConfig&)>());
+    std::function<void(sketch::SketchBase::Config&)> configurator = std::function<void(sketch::SketchBase::Config&)>());
 
 HWND GetMainWindow();
 

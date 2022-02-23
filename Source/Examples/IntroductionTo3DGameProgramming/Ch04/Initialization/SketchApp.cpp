@@ -5,7 +5,6 @@
 #include <dxgi1_6.h>
 #include <d3d12.h>
 
-#include "SketchBase.h"
 #include "Launcher.h"
 
 using Microsoft::WRL::ComPtr;
@@ -262,10 +261,8 @@ public:
         fenceValue_ = 1;
     }
 
-    virtual void Update(float dt) override
+    virtual void Update() override
     {
-        (void)dt;
-
         // Command list allocators can only be reset when the associated command lists have finished execution on the GPU.
         // Apps shoud use fences to determin GPU execution progress, which we will do at the end of this function.
         ThrowIfFailed(commandAllocator_->Reset());
@@ -321,7 +318,7 @@ public:
 };
 
 CREATE_SKETCH(Ch04_Initialization,
-    [](sketch::SketchConfig& config)
+    [](sketch::SketchBase::Config& config)
     {
         config.width = 800;
         config.height = 450;

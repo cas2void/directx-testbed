@@ -22,7 +22,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 	return 0;
 }
 
-static void RunInternal(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& sketchName, std::function<void(sketch::SketchConfig&)> configurator)
+static void RunInternal(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& sketchName, std::function<void(sketch::SketchBase::Config&)> configurator)
 {
 	if (configurator)
 	{
@@ -74,14 +74,14 @@ static void RunInternal(std::shared_ptr<sketch::SketchBase> sketchInstance, cons
 			TranslateMessage(&msg);
 			DispatchMessageW(&msg);
 
-			sketchInstance->Update(0);
+			sketchInstance->Update();
 		}
 	} while (TRUE);
 
 	sketchInstance->Quit();
 }
 
-void Run(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& sketchName, std::function<void(sketch::SketchConfig&)> configurator)
+void Run(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& sketchName, std::function<void(sketch::SketchBase::Config&)> configurator)
 {
 	try
 	{

@@ -3,25 +3,12 @@
 namespace sketch
 {
 
-void SketchBase::Init()
-{
-}
-
-void SketchBase::Update(float dt)
-{
-    (void)dt;
-}
-
-void SketchBase::Quit()
-{
-}
-
-void SketchBase::Configurate(std::function<void(sketch::SketchConfig&)> configurator)
+void SketchBase::Configurate(std::function<void(Config&)> configurator)
 {
     configurator(config_);
 }
 
-SketchConfig SketchBase::GetConfig() const
+const SketchBase::Config& SketchBase::GetConfig() const
 {
     return config_;
 }
