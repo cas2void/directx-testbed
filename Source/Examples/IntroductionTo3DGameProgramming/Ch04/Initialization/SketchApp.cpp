@@ -1,5 +1,6 @@
 #include <string>
 #include <stdexcept>
+#include <iostream>
 
 #include <wrl/client.h>
 #include <dxgi1_6.h>
@@ -314,6 +315,8 @@ public:
             WaitForSingleObject(eventHandle, INFINITE);
             CloseHandle(eventHandle);
         }
+
+        std::cout << deltaTime_ << std::endl;
     }
 };
 

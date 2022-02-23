@@ -62,6 +62,7 @@ static void RunInternal(std::shared_ptr<sketch::SketchBase> sketchInstance, cons
 	ShowWindow(SMainWindow, SW_SHOWDEFAULT);
 	UpdateWindow(SMainWindow);
 
+	sketchInstance->Reset();
 	MSG msg;
 	do
 	{
@@ -73,9 +74,9 @@ static void RunInternal(std::shared_ptr<sketch::SketchBase> sketchInstance, cons
 			}
 			TranslateMessage(&msg);
 			DispatchMessageW(&msg);
-
-			sketchInstance->Update();
 		}
+		sketchInstance->Tick();
+		sketchInstance->Update();
 	} while (TRUE);
 
 	sketchInstance->Quit();
