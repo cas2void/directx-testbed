@@ -162,6 +162,8 @@ class Ch04_Initialization : public sketch::SketchBase
     ComPtr<ID3D12DescriptorHeap> rtvHeap_;
     UINT rtvDescriptorSize_;
 
+    bool bVsync = true;
+
 public:
     virtual void Init() override
     {
@@ -221,15 +223,21 @@ public:
         // The first time we refer to the command list we will Reset it, and it is expected to be closed before calling Reset.
         ThrowIfFailed(commandList_->Close());
 
+        BOOL allowTearing = FALSE;
+        ThrowIfFailed(dxgiFactory6->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing)));
+
         // Swap chain
         DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
-        swapChainDesc.Width = config_.width;
-        swapChainDesc.Height = config_.height;
+        swapChainDesc.Width = GetConfig().width;
+        swapChainDesc.Height = GetConfig().height;
         swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         swapChainDesc.SampleDesc.Count = 1;
         swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         swapChainDesc.BufferCount = kSwapChainBufferCount;
         swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+        // Support Vsync off
+        // https://docs.microsoft.com/en-us/windows/win32/direct3ddxgi/variable-refresh-rate-displays
+        swapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
 
         ComPtr<IDXGISwapChain1> swapChain;
         ThrowIfFailed(dxgiFactory6->CreateSwapChainForHwnd(commandQueue_.Get(), launcher::GetMainWindow(), &swapChainDesc, nullptr, nullptr, swapChain.GetAddressOf()));
@@ -296,7 +304,14 @@ public:
         commandQueue_->ExecuteCommandLists(_countof(commandLists), commandLists);
 
         // Swap buffers
-        ThrowIfFailed(swapChain_->Present(1, 0));
+        if (bVsync)
+        {
+            ThrowIfFailed(swapChain_->Present(1, 0));
+        }
+        else
+        {
+            ThrowIfFailed(swapChain_->Present(0, DXGI_PRESENT_ALLOW_TEARING));
+        }
 
         // Add an instruction to the command queue to set a new fence point by
         // instructing 'fence_' to wait for the 'fenceValue_'.
@@ -316,7 +331,10 @@ public:
             CloseHandle(eventHandle);
         }
 
-        std::cout << deltaTime_ << std::endl;
+        std::cout << "Info:"
+            << "\n\tDelta Time: " << GetDeltaTime()
+            << "\n\tAverage FPS: " << GetAverageFPS()
+            << "\n\tElapsed: " << GetElapsedTime() << std::endl;
     }
 };
 

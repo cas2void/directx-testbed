@@ -75,8 +75,8 @@ static void RunInternal(std::shared_ptr<sketch::SketchBase> sketchInstance, cons
 			TranslateMessage(&msg);
 			DispatchMessageW(&msg);
 		}
-		sketchInstance->Tick();
 		sketchInstance->Update();
+		sketchInstance->Tick();
 	} while (TRUE);
 
 	sketchInstance->Quit();
