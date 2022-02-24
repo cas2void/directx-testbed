@@ -153,16 +153,14 @@ class Ch04_Initialization : public sketch::SketchBase
     static const UINT kSwapChainBufferCount = 2;
 
     ComPtr<ID3D12CommandQueue> commandQueue_;
+    ComPtr<IDXGISwapChain3> swapChain_;
+    ComPtr<ID3D12DescriptorHeap> rtvHeap_;
+    UINT rtvDescriptorSize_;
+    ComPtr<ID3D12Resource> swapChainBuffers_[kSwapChainBufferCount];
     ComPtr<ID3D12CommandAllocator> commandAllocator_;
     ComPtr<ID3D12GraphicsCommandList> commandList_;
     ComPtr<ID3D12Fence> fence_;
     UINT64 fenceValue_;
-    ComPtr<ID3D12Resource> swapChainBuffers_[kSwapChainBufferCount];
-    ComPtr<IDXGISwapChain3> swapChain_;
-    ComPtr<ID3D12DescriptorHeap> rtvHeap_;
-    UINT rtvDescriptorSize_;
-
-    bool bVsync = true;
 
 public:
     virtual void Init() override
@@ -213,19 +211,6 @@ public:
 
         ThrowIfFailed(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&commandQueue_)));
 
-        // Command allocator
-        ThrowIfFailed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator_)));
-
-        // Command list
-        ThrowIfFailed(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator_.Get(), nullptr, IID_PPV_ARGS(&commandList_)));
-
-        // Command lists are created in the recording state, but there is nothing to record yet.
-        // The first time we refer to the command list we will Reset it, and it is expected to be closed before calling Reset.
-        ThrowIfFailed(commandList_->Close());
-
-        BOOL allowTearing = FALSE;
-        ThrowIfFailed(dxgiFactory6->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing)));
-
         // Swap chain
         DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
         swapChainDesc.Width = GetConfig().width;
@@ -237,7 +222,9 @@ public:
         swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
         // Support Vsync off
         // https://docs.microsoft.com/en-us/windows/win32/direct3ddxgi/variable-refresh-rate-displays
-        swapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+        BOOL allowTearing = FALSE;
+        ThrowIfFailed(dxgiFactory6->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing)));
+        swapChainDesc.Flags = GetConfig().vsync ? 0 : DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
 
         ComPtr<IDXGISwapChain1> swapChain;
         ThrowIfFailed(dxgiFactory6->CreateSwapChainForHwnd(commandQueue_.Get(), launcher::GetMainWindow(), &swapChainDesc, nullptr, nullptr, swapChain.GetAddressOf()));
@@ -256,7 +243,7 @@ public:
         // Descriptor size
         rtvDescriptorSize_ = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
-        // Create frame resources, such as RTV/DSV, for each frame buffer.
+        // Create frame resources, such as RTV/DSV, for each back buffer.
         CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(rtvHeap_->GetCPUDescriptorHandleForHeapStart());
         for (UINT i = 0; i < kSwapChainBufferCount; i++)
         {
@@ -264,6 +251,16 @@ public:
             device->CreateRenderTargetView(swapChainBuffers_[i].Get(), nullptr, rtvHandle);
             rtvHandle.Offset(1, rtvDescriptorSize_);
         }
+
+        // Command allocator
+        ThrowIfFailed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator_)));
+
+        // Command list
+        ThrowIfFailed(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator_.Get(), nullptr, IID_PPV_ARGS(&commandList_)));
+
+        // Command lists are created in the recording state, but there is nothing to record yet.
+        // The first time we refer to the command list we will Reset it, and it is expected to be closed before calling Reset.
+        ThrowIfFailed(commandList_->Close());
 
         // Fence
         ThrowIfFailed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)));
@@ -304,7 +301,7 @@ public:
         commandQueue_->ExecuteCommandLists(_countof(commandLists), commandLists);
 
         // Swap buffers
-        if (bVsync)
+        if (GetConfig().vsync)
         {
             ThrowIfFailed(swapChain_->Present(1, 0));
         }

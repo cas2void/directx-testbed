@@ -21,6 +21,7 @@ public:
     {
         int width = 960;
         int height = 540;
+        bool vsync = true;
     };
 
     void Configurate(std::function<void(Config&)> configurator);
