@@ -1,4 +1,4 @@
-set(TARGET_NAME Ch04_Initialization)
+set(TARGET_NAME HelloWorld)
 
 add_executable(${TARGET_NAME})
 target_sources(${TARGET_NAME} PRIVATE SketchApp.cpp)
