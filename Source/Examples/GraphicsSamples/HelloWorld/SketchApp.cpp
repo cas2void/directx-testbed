@@ -148,7 +148,7 @@ struct CD3DX12_RESOURCE_BARRIER : public D3D12_RESOURCE_BARRIER
     }
 };
 
-class Ch04_Initialization : public sketch::SketchBase
+class HelloWorld : public sketch::SketchBase
 {
     static const UINT kSwapChainBufferCount = 2;
 
@@ -335,7 +335,7 @@ public:
     }
 };
 
-CREATE_SKETCH(Ch04_Initialization,
+CREATE_SKETCH(HelloWorld,
     [](sketch::SketchBase::Config& config)
     {
         config.width = 800;
