@@ -10,4 +10,6 @@ target_link_libraries(${TARGET_NAME} PRIVATE Launcher)
 target_include_directories(${TARGET_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/Source/Sketch)
 target_link_libraries(${TARGET_NAME} PRIVATE Sketch)
 
+target_link_libraries(${TARGET_NAME} PRIVATE DirectX-Headers)
+
 target_link_libraries(${TARGET_NAME} PRIVATE dxgi.lib d3d12.lib d3dcompiler.lib)

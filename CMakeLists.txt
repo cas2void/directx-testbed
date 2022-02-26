@@ -21,8 +21,13 @@ set(MYLIB_LIBRARY_DIRECTORIES ${CMAKE_SOURCE_DIR}/Library)
 # 用于设置 LIBRARY_OUTPUT_DIRECTORY (MSVC不需要)
 set(MYLIB_BINARY_DIRECTORIES ${CMAKE_SOURCE_DIR}/Binary)
 
+set(MYAPP_THIRDPARTY_DIRECTORIES ${CMAKE_SOURCE_DIR}/ThirdParty)
+
 # 在IDE中，对target使用文件夹分类
 SET_PROPERTY(GLOBAL PROPERTY USE_FOLDERS ON)
+
+# 第三方库
+add_subdirectory(ThirdParty/DirectX-Headers)
 
 function(set_compile_options _target)
     # MSVC设置警告级别和C++标准的特殊处理
