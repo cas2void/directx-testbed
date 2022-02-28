@@ -70,8 +70,7 @@ class HelloTriangle : public sketch::SketchBase
     ComPtr<ID3D12Fence> fence_;
     UINT64 fenceValue_;
     ComPtr<ID3D12RootSignature> rootSignature_;
-
-    ComPtr<ID3D12PipelineState> pipelineState;
+    ComPtr<ID3D12PipelineState> pipelineState_;
     ComPtr<ID3D12Resource> vertexBuffer_;
     D3D12_VERTEX_BUFFER_VIEW vertexBufferView_;
 
@@ -113,13 +112,11 @@ public:
         D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS qualityLevels = {};
         qualityLevels.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         qualityLevels.SampleCount = 4;
-        //qualityLevels.Flags = D3D12_MULTISAMPLE_QUALITY_LEVELS_FLAG_NONE;
         qualityLevels.NumQualityLevels = 0;
         ThrowIfFailed(device->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &qualityLevels, sizeof(qualityLevels)));
 
         // Command queue
         D3D12_COMMAND_QUEUE_DESC queueDesc = {};
-        //queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
         queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 
         ThrowIfFailed(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&commandQueue_)));
@@ -149,7 +146,6 @@ public:
         D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
         rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
         rtvHeapDesc.NumDescriptors = kSwapChainBufferCount;
-        //rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 
         ThrowIfFailed(device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rtvHeap_)));
 
@@ -168,16 +164,13 @@ public:
         // Command allocator
         ThrowIfFailed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator_)));
 
-        // Root signature
-        CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC rootSignatureDesc;
-        rootSignatureDesc.Init_1_0(0, nullptr, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+        // Pipeline state object
 
+        // Root signature, create an empty root signature
+        CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC rootSignatureDesc(0, static_cast<CD3DX12_ROOT_PARAMETER1*>(nullptr), 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
         ComPtr<ID3DBlob> signature;
         ThrowIfFailed(D3D12SerializeVersionedRootSignature(&rootSignatureDesc, signature.GetAddressOf(), nullptr));
-
         ThrowIfFailed(device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&rootSignature_)));
-
-        // Pipeline state object
 
         // Compile and load shaders
         ComPtr<ID3DBlob> vertexShader;
@@ -205,15 +198,16 @@ public:
         ThrowIfFailed(D3DCompileFromFile(path.c_str(), nullptr, nullptr, "PSMain", "ps_5_0", compileFlags, 0, &pixelShader, nullptr));
 
         // Define the vertex input layout.
-        D3D12_INPUT_ELEMENT_DESC inputElementDescs[] =
+        D3D12_INPUT_ELEMENT_DESC inputElementDesc[] =
         {
             { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
             { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
         };
+        D3D12_INPUT_LAYOUT_DESC inputLayoutDesc{ inputElementDesc, _countof(inputElementDesc) };
 
         // Describe and create the graphics pipeline state object (PSO).
         D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
-        psoDesc.InputLayout = { inputElementDescs, _countof(inputElementDescs) };
+        psoDesc.InputLayout = inputLayoutDesc;
         psoDesc.pRootSignature = rootSignature_.Get();
         psoDesc.VS = CD3DX12_SHADER_BYTECODE(vertexShader.Get());
         psoDesc.PS = CD3DX12_SHADER_BYTECODE(pixelShader.Get());
@@ -227,10 +221,10 @@ public:
         psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
         psoDesc.SampleDesc.Count = 1;
 
-        ThrowIfFailed(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineState)));
+        ThrowIfFailed(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineState_)));
 
         // Command list
-        ThrowIfFailed(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator_.Get(), pipelineState.Get(), IID_PPV_ARGS(&commandList_)));
+        ThrowIfFailed(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator_.Get(), pipelineState_.Get(), IID_PPV_ARGS(&commandList_)));
 
         // Command lists are created in the recording state, but there is nothing to record yet.
         // The first time we refer to the command list we will Reset it, and it is expected to be closed before calling Reset.
@@ -259,13 +253,7 @@ public:
         // code simplicity and because there are very few verts to actually transfer.
         CD3DX12_HEAP_PROPERTIES uploadPropety(D3D12_HEAP_TYPE_UPLOAD);
         CD3DX12_RESOURCE_DESC bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
-        ThrowIfFailed(device->CreateCommittedResource(
-            &uploadPropety,
-            D3D12_HEAP_FLAG_NONE,
-            &bufferDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ,
-            nullptr,
-            IID_PPV_ARGS(&vertexBuffer_)));
+        ThrowIfFailed(device->CreateCommittedResource(&uploadPropety, D3D12_HEAP_FLAG_NONE, &bufferDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&vertexBuffer_)));
 
         // Copy the triangle data to the vertex buffer.
         UINT8* pVertexDataBegin;
@@ -306,7 +294,7 @@ public:
 
         // After ExecuteCommandList() has been called on a particular command list,
         // that command list can then be reset at any time before re-recoding.
-        ThrowIfFailed(commandList_->Reset(commandAllocator_.Get(), pipelineState.Get()));
+        ThrowIfFailed(commandList_->Reset(commandAllocator_.Get(), pipelineState_.Get()));
 
         // Set necessary state.
         commandList_->SetGraphicsRootSignature(rootSignature_.Get());
