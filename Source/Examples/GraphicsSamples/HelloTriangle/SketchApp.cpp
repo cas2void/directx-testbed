@@ -10,8 +10,6 @@
 #include <DirectXMath.h>
 
 #include "Launcher.h"
-#include "ShadersVS.h"
-#include "ShadersPS.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -184,18 +182,8 @@ public:
 #else
         UINT compileFlags = 0;
 #endif
-
-        WCHAR assetsPath[512];
-        DWORD count = GetModuleFileNameW(nullptr, assetsPath, _countof(assetsPath));
-        ThrowIfFailed(count > 0 && count < 512);
-        WCHAR* lastSlash = wcsrchr(assetsPath, L'\\');
-        if (lastSlash)
-        {
-            *(lastSlash + 1) = L'\0';
-        }
-
-        std::wstring path(assetsPath);
-        path += L"shaders.hlsl";
+        std::wstring path(SHADER_DIR);
+        path += L"/shaders.hlsl";
         ThrowIfFailed(D3DCompileFromFile(path.c_str(), nullptr, nullptr, "VSMain", "vs_5_0", compileFlags, 0, &vertexShader, nullptr));
         ThrowIfFailed(D3DCompileFromFile(path.c_str(), nullptr, nullptr, "PSMain", "ps_5_0", compileFlags, 0, &pixelShader, nullptr));
 
