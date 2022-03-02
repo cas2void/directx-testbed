@@ -10,6 +10,8 @@
 #include <DirectXMath.h>
 
 #include "Launcher.h"
+#include "ShadersVS.h"
+#include "ShadersPS.h"
 
 using Microsoft::WRL::ComPtr;
 
