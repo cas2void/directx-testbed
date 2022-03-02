@@ -178,27 +178,6 @@ public:
         ComPtr<ID3DBlob> vertexShader;
         ComPtr<ID3DBlob> pixelShader;
 
-#if defined(_DEBUG)
-        // Enable better shader debugging with the graphics debugging tools.
-        UINT compileFlags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-#else
-        UINT compileFlags = 0;
-#endif
-
-        WCHAR assetsPath[512];
-        DWORD count = GetModuleFileNameW(nullptr, assetsPath, _countof(assetsPath));
-        ThrowIfFailed(count > 0 && count < 512);
-        WCHAR* lastSlash = wcsrchr(assetsPath, L'\\');
-        if (lastSlash)
-        {
-            *(lastSlash + 1) = L'\0';
-        }
-
-        std::wstring path(assetsPath);
-        path += L"shaders.hlsl";
-        ThrowIfFailed(D3DCompileFromFile(path.c_str(), nullptr, nullptr, "VSMain", "vs_5_0", compileFlags, 0, &vertexShader, nullptr));
-        ThrowIfFailed(D3DCompileFromFile(path.c_str(), nullptr, nullptr, "PSMain", "ps_5_0", compileFlags, 0, &pixelShader, nullptr));
-
         // Define the vertex input layout.
         D3D12_INPUT_ELEMENT_DESC inputElementDesc[] =
         {
@@ -211,8 +190,8 @@ public:
         D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
         psoDesc.InputLayout = inputLayoutDesc;
         psoDesc.pRootSignature = rootSignature_.Get();
-        psoDesc.VS = CD3DX12_SHADER_BYTECODE(vertexShader.Get());
-        psoDesc.PS = CD3DX12_SHADER_BYTECODE(pixelShader.Get());
+        psoDesc.VS = CD3DX12_SHADER_BYTECODE(g_VSMain, sizeof(g_VSMain));
+        psoDesc.PS = CD3DX12_SHADER_BYTECODE(g_PSMain, sizeof(g_PSMain));
         psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
         psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
         psoDesc.DepthStencilState.DepthEnable = FALSE;
