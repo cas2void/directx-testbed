@@ -175,8 +175,7 @@ public:
         ThrowIfFailed(device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&rootSignature_)));
 
         // Compile and load shaders
-        ComPtr<ID3DBlob> vertexShader;
-        ComPtr<ID3DBlob> pixelShader;
+        // Already compiled as g_VSMain, g_PSMain
 
         // Define the vertex input layout.
         D3D12_INPUT_ELEMENT_DESC inputElementDesc[] =
@@ -277,6 +276,15 @@ public:
         // that command list can then be reset at any time before re-recoding.
         ThrowIfFailed(commandList_->Reset(commandAllocator_.Get(), pipelineState_.Get()));
 
+        // Indicate the the back buffer will be used as a render target.
+        const UINT backBufferIndex = swapChain_->GetCurrentBackBufferIndex();
+        CD3DX12_RESOURCE_BARRIER toRenderBarrier = CD3DX12_RESOURCE_BARRIER::Transition(swapChainBuffers_[backBufferIndex].Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        commandList_->ResourceBarrier(1, &toRenderBarrier);
+
+        CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(rtvHeap_->GetCPUDescriptorHandleForHeapStart(), backBufferIndex, rtvDescriptorSize_);
+
+        commandList_->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+
         // Set necessary state.
         commandList_->SetGraphicsRootSignature(rootSignature_.Get());
 
@@ -284,16 +292,6 @@ public:
         CD3DX12_RECT scissorRect(0, 0, GetConfig().width, GetConfig().height);
         commandList_->RSSetViewports(1, &viewport);
         commandList_->RSSetScissorRects(1, &scissorRect);
-
-        const UINT backBufferIndex = swapChain_->GetCurrentBackBufferIndex();
-
-        // Indicate the the back buffer will be used as a render target.
-        CD3DX12_RESOURCE_BARRIER toRenderBarrier = CD3DX12_RESOURCE_BARRIER::Transition(swapChainBuffers_[backBufferIndex].Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
-        commandList_->ResourceBarrier(1, &toRenderBarrier);
-
-        CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(rtvHeap_->GetCPUDescriptorHandleForHeapStart(), backBufferIndex, rtvDescriptorSize_);
-
-        commandList_->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
 
         // Record commands
         const FLOAT clearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f};
