@@ -52,7 +52,7 @@ inline void ThrowIfFailed(bool condition)
     }
 }
 
-class HelloShaderCompilation : public sketch::SketchBase
+class HelloConstantBuffer : public sketch::SketchBase
 {
     static const UINT kSwapChainBufferCount = 2;
 
@@ -62,9 +62,17 @@ class HelloShaderCompilation : public sketch::SketchBase
         DirectX::XMFLOAT4 color;
     };
 
+    struct SceneConstantBuffer
+    {
+        DirectX::XMFLOAT4 offset;
+        float padding[60]; // Padding so the constant buffer is 256-byte aligned.
+    };
+    static_assert((sizeof(SceneConstantBuffer) % 256) == 0, "Constant Buffer size must be 256-byte aligned");
+
     ComPtr<ID3D12CommandQueue> commandQueue_;
     ComPtr<IDXGISwapChain3> swapChain_;
     ComPtr<ID3D12DescriptorHeap> rtvHeap_;
+    ComPtr<ID3D12DescriptorHeap> cbvHeap_;
     UINT rtvDescriptorSize_;
     ComPtr<ID3D12Resource> swapChainBuffers_[kSwapChainBufferCount];
     ComPtr<ID3D12CommandAllocator> commandAllocator_;
@@ -75,6 +83,9 @@ class HelloShaderCompilation : public sketch::SketchBase
     ComPtr<ID3D12PipelineState> pipelineState_;
     ComPtr<ID3D12Resource> vertexBuffer_;
     D3D12_VERTEX_BUFFER_VIEW vertexBufferView_;
+    SceneConstantBuffer constantBufferData_;
+    ComPtr<ID3D12Resource> constantBuffer_;
+    UINT8* cbvDataBegin_;
 
 public:
     virtual void Init() override
@@ -154,6 +165,14 @@ public:
         // Descriptor size
         rtvDescriptorSize_ = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
+        // Describe and create a constant buffer view (CBV) descriptor heap
+        D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc = {};
+        cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        cbvHeapDesc.NumDescriptors = 1;
+        cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+
+        ThrowIfFailed(device->CreateDescriptorHeap(&cbvHeapDesc, IID_PPV_ARGS(&cbvHeap_)));
+
         // Create frame resources, such as RTV/DSV, for each back buffer.
         CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(rtvHeap_->GetCPUDescriptorHandleForHeapStart());
         for (UINT i = 0; i < kSwapChainBufferCount; i++)
@@ -163,13 +182,24 @@ public:
             rtvHandle.Offset(1, rtvDescriptorSize_);
         }
 
-        // Command allocator
-        ThrowIfFailed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator_)));
+        // Root Signagure, consisting of a descriptor table with a single CBV
+        CD3DX12_DESCRIPTOR_RANGE1 ranges[1];
+        ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC);
 
-        // Pipeline state object
+        CD3DX12_ROOT_PARAMETER1 rootParameters[1];
+        rootParameters[0].InitAsDescriptorTable(1, ranges, D3D12_SHADER_VISIBILITY_VERTEX);
 
-        // Root signature, create an empty root signature
-        CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC rootSignatureDesc(0, static_cast<CD3DX12_ROOT_PARAMETER1*>(nullptr), 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+        // Allow input layout and deny uneccessary access to certain pipeline stages.
+        D3D12_ROOT_SIGNATURE_FLAGS rootSignatureFlags = 
+            D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_PIXEL_SHADER_ROOT_ACCESS;
+        
+        CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC rootSignatureDesc;
+        rootSignatureDesc.Init_1_1(_countof(rootParameters), rootParameters, 0, nullptr, rootSignatureFlags);
+
         ComPtr<ID3DBlob> signature;
         ThrowIfFailed(D3D12SerializeVersionedRootSignature(&rootSignatureDesc, signature.GetAddressOf(), nullptr));
         ThrowIfFailed(device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&rootSignature_)));
@@ -185,6 +215,7 @@ public:
         };
         D3D12_INPUT_LAYOUT_DESC inputLayoutDesc{ inputElementDesc, _countof(inputElementDesc) };
 
+        // Pipeline state object
         // Describe and create the graphics pipeline state object (PSO).
         D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
         psoDesc.InputLayout = inputLayoutDesc;
@@ -202,6 +233,9 @@ public:
         psoDesc.SampleDesc.Count = 1;
 
         ThrowIfFailed(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineState_)));
+
+        // Command allocator
+        ThrowIfFailed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator_)));
 
         // Command list
         ThrowIfFailed(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator_.Get(), pipelineState_.Get(), IID_PPV_ARGS(&commandList_)));
@@ -232,8 +266,8 @@ public:
         // over. Please read up on Default Heap usage. An upload heap is used here for 
         // code simplicity and because there are very few verts to actually transfer.
         CD3DX12_HEAP_PROPERTIES uploadPropety(D3D12_HEAP_TYPE_UPLOAD);
-        CD3DX12_RESOURCE_DESC bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
-        ThrowIfFailed(device->CreateCommittedResource(&uploadPropety, D3D12_HEAP_FLAG_NONE, &bufferDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&vertexBuffer_)));
+        CD3DX12_RESOURCE_DESC vertexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
+        ThrowIfFailed(device->CreateCommittedResource(&uploadPropety, D3D12_HEAP_FLAG_NONE, &vertexBufferDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&vertexBuffer_)));
 
         // Initialize the vertex buffer view.
         // Buffer View的创建可以放在数据拷贝之后或之前，因为所需的信息均为已知。
@@ -247,6 +281,26 @@ public:
         ThrowIfFailed(vertexBuffer_->Map(0, &readRange, reinterpret_cast<void**>(&pVertexDataBegin)));
         memcpy(pVertexDataBegin, triangleVertices, sizeof(triangleVertices));
         vertexBuffer_->Unmap(0, nullptr);
+
+        // Create the constant buffer
+
+        const UINT constantBufferSize = sizeof(SceneConstantBuffer);
+
+        CD3DX12_RESOURCE_DESC constantBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(constantBufferSize);
+        ThrowIfFailed(device->CreateCommittedResource(&uploadPropety, D3D12_HEAP_FLAG_NONE, &constantBufferDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&constantBuffer_)));
+
+        // Describe and create a constant buffer view (CBV)
+        D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc = {};
+        cbvDesc.BufferLocation = constantBuffer_->GetGPUVirtualAddress();
+        cbvDesc.SizeInBytes = constantBufferSize;
+
+        CD3DX12_CPU_DESCRIPTOR_HANDLE cbvHandle(cbvHeap_->GetCPUDescriptorHandleForHeapStart());
+        device->CreateConstantBufferView(&cbvDesc, cbvHandle);
+
+        // Map and initialize the constant buffer. We don't unmap this until the
+        // app closes. Keeping things mapped for the lifetime of the resource is okay.
+        ThrowIfFailed(constantBuffer_->Map(0, &readRange, reinterpret_cast<void**>(&cbvDataBegin_)));
+        memcpy(cbvDataBegin_, &constantBufferData_, constantBufferSize);
 
         // Add an instruction to the command queue to set a new fence point by
         // instructing 'fence_' to wait for the 'fenceValue_'.
@@ -269,6 +323,16 @@ public:
 
     virtual void Update() override
     {
+        const float translationSpeed = 0.3f;
+        const float offsetBounds = 1.25f;
+
+        constantBufferData_.offset.x += translationSpeed * GetDeltaTime();
+        if (constantBufferData_.offset.x > offsetBounds)
+        {
+            constantBufferData_.offset.x = -offsetBounds;
+        }
+        memcpy(cbvDataBegin_, &constantBufferData_, sizeof(constantBufferData_));
+
         // Command list allocators can only be reset when the associated command lists have finished execution on the GPU.
         // Apps shoud use fences to determin GPU execution progress, which we will do at the end of this function.
         ThrowIfFailed(commandAllocator_->Reset());
@@ -288,6 +352,9 @@ public:
 
         // Set necessary state.
         commandList_->SetGraphicsRootSignature(rootSignature_.Get());
+        ID3D12DescriptorHeap* descriptorHeap[] = { cbvHeap_.Get() };
+        commandList_->SetDescriptorHeaps(_countof(descriptorHeap), descriptorHeap);
+        commandList_->SetGraphicsRootDescriptorTable(0, cbvHeap_->GetGPUDescriptorHandleForHeapStart());
 
         CD3DX12_VIEWPORT viewport(0.0f, 0.0f, static_cast<float>(GetConfig().width), static_cast<float>(GetConfig().height));
         CD3DX12_RECT scissorRect(0, 0, GetConfig().width, GetConfig().height);
@@ -340,9 +407,14 @@ public:
             CloseHandle(eventHandle);
         }
     }
+
+    virtual void Quit() override
+    {
+        constantBuffer_->Unmap(0, nullptr);
+    }
 };
 
-CREATE_SKETCH(HelloShaderCompilation,
+CREATE_SKETCH(HelloConstantBuffer,
     [](sketch::SketchBase::Config& config)
     {
         config.width = 800;
