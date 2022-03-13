@@ -52,7 +52,7 @@ inline void ThrowIfFailed(bool condition)
     }
 }
 
-class HelloVertexBuffer : public sketch::SketchBase
+class HelloQuad : public sketch::SketchBase
 {
     static const UINT kSwapChainBufferCount = 2;
 
@@ -244,14 +244,15 @@ public:
 
         float aspectRatio = (float)GetConfig().width / GetConfig().height;
         // Define the geometry for a triangle.
-        Vertex triangleVertices[] =
+        Vertex quadVertices[] =
         {
-            { { 0.0f, 0.25f * aspectRatio, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
-            { { 0.25f, -0.25f * aspectRatio, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f } },
-            { { -0.25f, -0.25f * aspectRatio, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } }
+            { { -0.25f, 0.25f * aspectRatio, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
+            { { 0.25f, 0.25f * aspectRatio, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f } },
+            { { -0.25f, -0.25f * aspectRatio, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } },
+            { { 0.25f, -0.25f * aspectRatio, 0.0f }, { 1.0f, 1.0f, 1.0f, 1.0f } }
         };
 
-        const UINT vertexBufferSize = sizeof(triangleVertices);
+        const UINT vertexBufferSize = sizeof(quadVertices);
 
         // Note: using upload heaps to transfer static data like vert buffers is not recommended.
         // Every time the GPU needs it, the upload heap will be marshalled over. Use default heaps instead.
@@ -270,7 +271,7 @@ public:
         UINT8* vertexDataBegin;
         CD3DX12_RANGE readRange(0, 0);        // We do not intend to read from this resource on the CPU.
         ThrowIfFailed(vertexBufferUpload->Map(0, &readRange, reinterpret_cast<void**>(&vertexDataBegin)));
-        memcpy(vertexDataBegin, triangleVertices, sizeof(triangleVertices));
+        memcpy(vertexDataBegin, quadVertices, sizeof(quadVertices));
         vertexBufferUpload->Unmap(0, nullptr);
 
         // 将顶点数据由 upload heap 拷贝至 default heap
@@ -381,9 +382,9 @@ public:
         // Record commands
         const FLOAT clearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f};
         commandList_->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
-        commandList_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        commandList_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
         commandList_->IASetVertexBuffers(0, 1, &vertexBufferView_);
-        commandList_->DrawInstanced(3, 1, 0, 0);
+        commandList_->DrawInstanced(4, 1, 0, 0);
 
         // Indicate that the back buffer will now be used to present.
         CD3DX12_RESOURCE_BARRIER toPresentBarrier = CD3DX12_RESOURCE_BARRIER::Transition(swapChainBuffers_[backBufferIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
@@ -431,7 +432,7 @@ public:
     }
 };
 
-CREATE_SKETCH(HelloVertexBuffer,
+CREATE_SKETCH(HelloQuad,
     [](sketch::SketchBase::Config& config)
     {
         config.width = 800;
