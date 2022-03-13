@@ -52,7 +52,7 @@ inline void ThrowIfFailed(bool condition)
     }
 }
 
-class HelloConstantBuffer : public sketch::SketchBase
+class HelloVertexBuffer : public sketch::SketchBase
 {
     static const UINT kSwapChainBufferCount = 2;
 
@@ -240,14 +240,6 @@ public:
         // Command list
         ThrowIfFailed(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator_.Get(), pipelineState_.Get(), IID_PPV_ARGS(&commandList_)));
 
-        // Command lists are created in the recording state, but there is nothing to record yet.
-        // The first time we refer to the command list we will Reset it, and it is expected to be closed before calling Reset.
-        ThrowIfFailed(commandList_->Close());
-
-        // Fence
-        ThrowIfFailed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)));
-        fenceValue_ = 1;
-
         // Create the vertex buffer.
 
         float aspectRatio = (float)GetConfig().width / GetConfig().height;
@@ -263,31 +255,42 @@ public:
 
         // Note: using upload heaps to transfer static data like vert buffers is not 
         // recommended. Every time the GPU needs it, the upload heap will be marshalled 
-        // over. Please read up on Default Heap usage. An upload heap is used here for 
-        // code simplicity and because there are very few verts to actually transfer.
-        CD3DX12_HEAP_PROPERTIES uploadPropety(D3D12_HEAP_TYPE_UPLOAD);
+        // over. Using default heaps is recommended.
         CD3DX12_RESOURCE_DESC vertexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
-        ThrowIfFailed(device->CreateCommittedResource(&uploadPropety, D3D12_HEAP_FLAG_NONE, &vertexBufferDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&vertexBuffer_)));
+
+        CD3DX12_HEAP_PROPERTIES defaultProperty(D3D12_HEAP_TYPE_DEFAULT);
+        ThrowIfFailed(device->CreateCommittedResource(&defaultProperty, D3D12_HEAP_FLAG_NONE, &vertexBufferDesc, 
+            D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&vertexBuffer_)));
+
+        ComPtr<ID3D12Resource> vertexBufferUpload;
+        CD3DX12_HEAP_PROPERTIES uploadPropety(D3D12_HEAP_TYPE_UPLOAD);
+        ThrowIfFailed(device->CreateCommittedResource(&uploadPropety, D3D12_HEAP_FLAG_NONE, &vertexBufferDesc, 
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&vertexBufferUpload)));
+
+        // Copy the triangle data to the vertex buffer in upload heap.
+        UINT8* vertexDataBegin;
+        CD3DX12_RANGE readRange(0, 0);        // We do not intend to read from this resource on the CPU.
+        ThrowIfFailed(vertexBufferUpload->Map(0, &readRange, reinterpret_cast<void**>(&vertexDataBegin)));
+        memcpy(vertexDataBegin, triangleVertices, sizeof(triangleVertices));
+        vertexBufferUpload->Unmap(0, nullptr);
+
+        commandList_->CopyBufferRegion(vertexBuffer_.Get(), 0, vertexBufferUpload.Get(), 0, vertexBufferSize);
+        CD3DX12_RESOURCE_BARRIER toVertesBufferBarrier = CD3DX12_RESOURCE_BARRIER::Transition(vertexBuffer_.Get(), 
+            D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+        commandList_->ResourceBarrier(1, &toVertesBufferBarrier);
 
         // Initialize the vertex buffer view.
-        // Buffer View的创建可以放在数据拷贝之后或之前，因为所需的信息均为已知。
         vertexBufferView_.BufferLocation = vertexBuffer_->GetGPUVirtualAddress();
         vertexBufferView_.StrideInBytes = sizeof(Vertex);
         vertexBufferView_.SizeInBytes = vertexBufferSize;
-
-        // Copy the triangle data to the vertex buffer.
-        UINT8* pVertexDataBegin;
-        CD3DX12_RANGE readRange(0, 0);        // We do not intend to read from this resource on the CPU.
-        ThrowIfFailed(vertexBuffer_->Map(0, &readRange, reinterpret_cast<void**>(&pVertexDataBegin)));
-        memcpy(pVertexDataBegin, triangleVertices, sizeof(triangleVertices));
-        vertexBuffer_->Unmap(0, nullptr);
 
         // Create the constant buffer
 
         const UINT constantBufferSize = sizeof(SceneConstantBuffer);
 
         CD3DX12_RESOURCE_DESC constantBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(constantBufferSize);
-        ThrowIfFailed(device->CreateCommittedResource(&uploadPropety, D3D12_HEAP_FLAG_NONE, &constantBufferDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&constantBuffer_)));
+        ThrowIfFailed(device->CreateCommittedResource(&uploadPropety, D3D12_HEAP_FLAG_NONE, &constantBufferDesc, 
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&constantBuffer_)));
 
         // Describe and create a constant buffer view (CBV)
         D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc = {};
@@ -301,6 +304,16 @@ public:
         // app closes. Keeping things mapped for the lifetime of the resource is okay.
         ThrowIfFailed(constantBuffer_->Map(0, &readRange, reinterpret_cast<void**>(&cbvDataBegin_)));
         memcpy(cbvDataBegin_, &constantBufferData_, constantBufferSize);
+
+        // Fence
+        ThrowIfFailed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)));
+        fenceValue_ = 1;
+
+        // Command lists are created in the recording state.
+        // Close the resource creation command list and execute it to begin the vertex buffer copy into the default heap.
+        ThrowIfFailed(commandList_->Close());
+        ID3D12CommandList* commandLists[] = { commandList_.Get() };
+        commandQueue_->ExecuteCommandLists(_countof(commandLists), commandLists);
 
         // Add an instruction to the command queue to set a new fence point by
         // instructing 'fence_' to wait for the 'fenceValue_'.
@@ -415,7 +428,7 @@ public:
     }
 };
 
-CREATE_SKETCH(HelloConstantBuffer,
+CREATE_SKETCH(HelloVertexBuffer,
     [](sketch::SketchBase::Config& config)
     {
         config.width = 800;
