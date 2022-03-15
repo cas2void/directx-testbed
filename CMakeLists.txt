@@ -92,3 +92,4 @@ add_app_in_subdirectory(Source/Examples/GraphicsSamples/HelloShaderCompilation E
 add_app_in_subdirectory(Source/Examples/GraphicsSamples/HelloConstantBuffer Examples/GraphicsSamples)
 add_app_in_subdirectory(Source/Examples/GraphicsSamples/HelloVertexBuffer Examples/GraphicsSamples)
 add_app_in_subdirectory(Source/Examples/GraphicsSamples/HelloQuad Examples/GraphicsSamples)
+add_app_in_subdirectory(Source/Examples/GraphicsSamples/HelloFrameBuffering Examples/GraphicsSamples)

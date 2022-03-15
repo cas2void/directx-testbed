@@ -1,6 +1,7 @@
 ﻿#include <string>
 #include <stdexcept>
 #include <iostream>
+#include <chrono>
 
 #include <wrl/client.h>
 #include <dxgi1_6.h>
@@ -15,11 +16,17 @@
 
 using Microsoft::WRL::ComPtr;
 
-inline std::string HrToString(HRESULT hr)
+inline std::string HrToString(HRESULT hr, const std::string& context)
 {
     char str[64] = {};
     sprintf_s(str, "HRESULT of 0x%08X", static_cast<unsigned int>(hr));
-    return std::string(str);
+    std::string result(str);
+    if (context.length() > 0)
+    {
+        result += ": ";
+        result += context;
+    }
+    return result;
 }
 
 // Helper class for COM exceptions
@@ -28,7 +35,7 @@ inline std::string HrToString(HRESULT hr)
 class HrException : public std::runtime_error
 {
 public:
-    HrException(HRESULT hr) : std::runtime_error(HrToString(hr)), result_(hr) {}
+    HrException(HRESULT hr, const std::string& context) : std::runtime_error(HrToString(hr, context)), result_(hr) {}
     HRESULT Error() const { return result_; }
 
 private:
@@ -36,25 +43,18 @@ private:
 };
 
 // Helper utility converts D3D API failures into exceptions.
-inline void ThrowIfFailed(HRESULT hr)
+inline void ThrowIfFailed(HRESULT hr, const std::string& context = "")
 {
     if (FAILED(hr))
     {
-        throw HrException(hr);
+        throw HrException(hr, context);
     }
 }
 
-inline void ThrowIfFailed(bool condition)
+class HelloFrameBuffering : public sketch::SketchBase
 {
-    if (!condition)
-    {
-        throw HrException(E_FAIL);
-    }
-}
-
-class HelloQuad : public sketch::SketchBase
-{
-    static const UINT kSwapChainBufferCount = 2;
+    static const UINT kNumSwapChainBuffers = 2;
+    static const UINT kNumFrames = 2;
 
     struct Vertex
     {
@@ -62,19 +62,11 @@ class HelloQuad : public sketch::SketchBase
         DirectX::XMFLOAT4 color;
     };
 
-    struct SceneConstantBuffer
-    {
-        DirectX::XMFLOAT4 offset;
-        float padding[60]; // Padding so the constant buffer is 256-byte aligned.
-    };
-    static_assert((sizeof(SceneConstantBuffer) % 256) == 0, "Constant Buffer size must be 256-byte aligned");
-
     ComPtr<ID3D12CommandQueue> commandQueue_;
     ComPtr<IDXGISwapChain3> swapChain_;
     ComPtr<ID3D12DescriptorHeap> rtvHeap_;
-    ComPtr<ID3D12DescriptorHeap> cbvHeap_;
     UINT rtvDescriptorSize_;
-    ComPtr<ID3D12Resource> swapChainBuffers_[kSwapChainBufferCount];
+    ComPtr<ID3D12Resource> swapChainBuffers_[kNumSwapChainBuffers];
     ComPtr<ID3D12CommandAllocator> commandAllocator_;
     ComPtr<ID3D12GraphicsCommandList> commandList_;
     ComPtr<ID3D12Fence> fence_;
@@ -84,9 +76,6 @@ class HelloQuad : public sketch::SketchBase
     ComPtr<ID3D12PipelineState> pipelineState_;
     ComPtr<ID3D12Resource> vertexBuffer_;
     D3D12_VERTEX_BUFFER_VIEW vertexBufferView_;
-    SceneConstantBuffer constantBufferData_;
-    ComPtr<ID3D12Resource> constantBuffer_;
-    UINT8* cbvDataBegin_;
 
 public:
     virtual void Init() override
@@ -112,28 +101,28 @@ public:
 
         // Factory
         ComPtr<IDXGIFactory6> dxgiFactory6;
-        ThrowIfFailed(CreateDXGIFactory2(dxgiFactoryFlag, IID_PPV_ARGS(&dxgiFactory6)));
+        ThrowIfFailed(CreateDXGIFactory2(dxgiFactoryFlag, IID_PPV_ARGS(&dxgiFactory6)), "CreateDXGIFactory2");
 
         // Adapter
         ComPtr<IDXGIAdapter> adapter;
-        ThrowIfFailed(dxgiFactory6->EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter)));
+        ThrowIfFailed(dxgiFactory6->EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter)), "EnumAdapterByGpuPreference");
 
         // Device
         ComPtr<ID3D12Device> device;
-        ThrowIfFailed(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)));
+        ThrowIfFailed(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)), "D3D12CreateDevice");
 
         // MSAA support
         D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS qualityLevels = {};
         qualityLevels.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         qualityLevels.SampleCount = 4;
         qualityLevels.NumQualityLevels = 0;
-        ThrowIfFailed(device->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &qualityLevels, sizeof(qualityLevels)));
+        ThrowIfFailed(device->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &qualityLevels, sizeof(qualityLevels)), "CheckFeatureSupport");
 
         // Command queue
         D3D12_COMMAND_QUEUE_DESC queueDesc = {};
         queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 
-        ThrowIfFailed(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&commandQueue_)));
+        ThrowIfFailed(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&commandQueue_)), "CreateCommandQueue");
 
         // Swap chain
         DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
@@ -142,53 +131,40 @@ public:
         swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         swapChainDesc.SampleDesc.Count = 1;
         swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-        swapChainDesc.BufferCount = kSwapChainBufferCount;
+        swapChainDesc.BufferCount = kNumSwapChainBuffers;
         swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
         // Support Vsync off
         // https://docs.microsoft.com/en-us/windows/win32/direct3ddxgi/variable-refresh-rate-displays
         BOOL allowTearing = FALSE;
-        ThrowIfFailed(dxgiFactory6->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing)));
+        ThrowIfFailed(dxgiFactory6->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing)), "CheckFeatureSupport");
         swapChainDesc.Flags = GetConfig().vsync ? 0 : DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
 
         ComPtr<IDXGISwapChain1> swapChain;
-        ThrowIfFailed(dxgiFactory6->CreateSwapChainForHwnd(commandQueue_.Get(), launcher::GetMainWindow(), &swapChainDesc, nullptr, nullptr, swapChain.GetAddressOf()));
-        ThrowIfFailed(swapChain->QueryInterface(IID_PPV_ARGS(&swapChain_)));
+        ThrowIfFailed(dxgiFactory6->CreateSwapChainForHwnd(commandQueue_.Get(), launcher::GetMainWindow(), &swapChainDesc, nullptr, nullptr, swapChain.GetAddressOf()), "CreateSwapChainForHwnd");
+        ThrowIfFailed(swapChain->QueryInterface(IID_PPV_ARGS(&swapChain_)), "QueryInterface");
 
         // Descriptor heaps
         // 
         // Describe and create a render target view (RTV) descriptor heap
         D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
         rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-        rtvHeapDesc.NumDescriptors = kSwapChainBufferCount;
+        rtvHeapDesc.NumDescriptors = kNumSwapChainBuffers;
 
-        ThrowIfFailed(device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rtvHeap_)));
+        ThrowIfFailed(device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rtvHeap_)), "CreateDescriptorHeap");
 
         // Descriptor size
         rtvDescriptorSize_ = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
-        // Describe and create a constant buffer view (CBV) descriptor heap
-        D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc = {};
-        cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-        cbvHeapDesc.NumDescriptors = 1;
-        cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-
-        ThrowIfFailed(device->CreateDescriptorHeap(&cbvHeapDesc, IID_PPV_ARGS(&cbvHeap_)));
-
         // Create frame resources, such as RTV/DSV, for each back buffer.
         CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(rtvHeap_->GetCPUDescriptorHandleForHeapStart());
-        for (UINT i = 0; i < kSwapChainBufferCount; i++)
+        for (UINT i = 0; i < kNumSwapChainBuffers; i++)
         {
-            ThrowIfFailed(swapChain_->GetBuffer(i, IID_PPV_ARGS(&swapChainBuffers_[i])));
+            ThrowIfFailed(swapChain_->GetBuffer(i, IID_PPV_ARGS(&swapChainBuffers_[i])), "GetBuffer");
             device->CreateRenderTargetView(swapChainBuffers_[i].Get(), nullptr, rtvHandle);
             rtvHandle.Offset(1, rtvDescriptorSize_);
         }
 
-        // Root Signagure, consisting of a descriptor table with a single CBV
-        CD3DX12_DESCRIPTOR_RANGE1 ranges[1];
-        ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC);
-
-        CD3DX12_ROOT_PARAMETER1 rootParameters[1];
-        rootParameters[0].InitAsDescriptorTable(_countof(ranges), ranges, D3D12_SHADER_VISIBILITY_VERTEX);
+        // Root Signagure, consisting of emptry root parameter.
 
         // Allow input layout and deny uneccessary access to certain pipeline stages.
         D3D12_ROOT_SIGNATURE_FLAGS rootSignatureFlags = 
@@ -199,11 +175,11 @@ public:
             D3D12_ROOT_SIGNATURE_FLAG_DENY_PIXEL_SHADER_ROOT_ACCESS;
         
         CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC rootSignatureDesc;
-        rootSignatureDesc.Init_1_1(_countof(rootParameters), rootParameters, 0, nullptr, rootSignatureFlags);
+        rootSignatureDesc.Init_1_1(0, nullptr, 0, nullptr, rootSignatureFlags);
 
         ComPtr<ID3DBlob> signature;
-        ThrowIfFailed(D3D12SerializeVersionedRootSignature(&rootSignatureDesc, signature.GetAddressOf(), nullptr));
-        ThrowIfFailed(device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&rootSignature_)));
+        ThrowIfFailed(D3D12SerializeVersionedRootSignature(&rootSignatureDesc, signature.GetAddressOf(), nullptr), "D3D12SerializeVersionedRootSignature");
+        ThrowIfFailed(device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&rootSignature_)), "CreateRootSignature");
 
         // Compile and load shaders
         // Already compiled as g_VSMain, g_PSMain
@@ -233,13 +209,13 @@ public:
         psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
         psoDesc.SampleDesc.Count = 1;
 
-        ThrowIfFailed(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineState_)));
+        ThrowIfFailed(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineState_)), "CreateGraphicsPipelineState");
 
         // Command allocator
-        ThrowIfFailed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator_)));
+        ThrowIfFailed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator_)), "CreateCommandAllocator");
 
         // Command list
-        ThrowIfFailed(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator_.Get(), pipelineState_.Get(), IID_PPV_ARGS(&commandList_)));
+        ThrowIfFailed(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator_.Get(), pipelineState_.Get(), IID_PPV_ARGS(&commandList_)), "CreateCommandList");
 
         // Create the vertex buffer.
 
@@ -261,17 +237,17 @@ public:
 
         CD3DX12_HEAP_PROPERTIES defaultProperty(D3D12_HEAP_TYPE_DEFAULT);
         ThrowIfFailed(device->CreateCommittedResource(&defaultProperty, D3D12_HEAP_FLAG_NONE, &vertexBufferDesc, 
-            D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&vertexBuffer_)));
+            D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&vertexBuffer_)), "CreateCommittedResource");
 
         ComPtr<ID3D12Resource> vertexBufferUpload;
         CD3DX12_HEAP_PROPERTIES uploadPropety(D3D12_HEAP_TYPE_UPLOAD);
         ThrowIfFailed(device->CreateCommittedResource(&uploadPropety, D3D12_HEAP_FLAG_NONE, &vertexBufferDesc, 
-            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&vertexBufferUpload)));
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&vertexBufferUpload)), "CreateCommittedResource");
 
         // Copy the triangle data to the vertex buffer in upload heap.
         UINT8* vertexDataBegin;
         CD3DX12_RANGE readRange(0, 0);        // We do not intend to read from this resource on the CPU.
-        ThrowIfFailed(vertexBufferUpload->Map(0, &readRange, reinterpret_cast<void**>(&vertexDataBegin)));
+        ThrowIfFailed(vertexBufferUpload->Map(0, &readRange, reinterpret_cast<void**>(&vertexDataBegin)), "Map");
         memcpy(vertexDataBegin, quadVertices, sizeof(quadVertices));
         vertexBufferUpload->Unmap(0, nullptr);
 
@@ -289,74 +265,29 @@ public:
         vertexBufferView_.StrideInBytes = sizeof(Vertex);
         vertexBufferView_.SizeInBytes = vertexBufferSize;
 
-        // Create the constant buffer
-
-        const UINT constantBufferSize = sizeof(SceneConstantBuffer);
-
-        CD3DX12_RESOURCE_DESC constantBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(constantBufferSize);
-        ThrowIfFailed(device->CreateCommittedResource(&uploadPropety, D3D12_HEAP_FLAG_NONE, &constantBufferDesc, 
-            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&constantBuffer_)));
-
-        // Describe and create a constant buffer view (CBV)
-        D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc = {};
-        cbvDesc.BufferLocation = constantBuffer_->GetGPUVirtualAddress();
-        cbvDesc.SizeInBytes = constantBufferSize;
-
-        CD3DX12_CPU_DESCRIPTOR_HANDLE cbvHandle(cbvHeap_->GetCPUDescriptorHandleForHeapStart());
-        device->CreateConstantBufferView(&cbvDesc, cbvHandle);
-
-        // Map and initialize the constant buffer. We don't unmap this until the
-        // app closes. Keeping things mapped for the lifetime of the resource is okay.
-        ThrowIfFailed(constantBuffer_->Map(0, &readRange, reinterpret_cast<void**>(&cbvDataBegin_)));
-        memcpy(cbvDataBegin_, &constantBufferData_, constantBufferSize);
-
         // Command lists are created in the recording state.
         // Close the resource creation command list and execute it to begin the vertex buffer copy into the default heap.
-        ThrowIfFailed(commandList_->Close());
+        ThrowIfFailed(commandList_->Close(), "Close command list");
         ID3D12CommandList* commandLists[] = { commandList_.Get() };
         commandQueue_->ExecuteCommandLists(_countof(commandLists), commandLists);
 
         // Fence
-        ThrowIfFailed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)));
+        ThrowIfFailed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)), "CreateFence");
         fenceValue_ = 1;
         fenceEventHandle_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 
-        // Add an instruction to the command queue to set a new fence point by instructing 'fence_' to wait for the 'fenceValue_'.
-        // `fence_` value won't be set by GPU until it finishes processing all the commands prior to this `Signal()`.
-        const UINT64 fenceValueToWaitFor = fenceValue_;
-        ThrowIfFailed(commandQueue_->Signal(fence_.Get(), fenceValueToWaitFor));
-        fenceValue_++;
-
-        // Wait until the GPU has completed commands up to this fence point.
-        if (fence_->GetCompletedValue() < fenceValueToWaitFor)
-        {
-            // Fire event when GPU hits current fence.
-            ThrowIfFailed(fence_->SetEventOnCompletion(fenceValueToWaitFor, fenceEventHandle_));
-
-            // Wait until the created event is fired
-            WaitForSingleObject(fenceEventHandle_, INFINITE);
-        }
+        WaitForPreviousFrame("INIT");
     }
 
     virtual void Update() override
     {
-        const float translationSpeed = 0.3f;
-        const float offsetBounds = 1.25f;
-
-        constantBufferData_.offset.x += translationSpeed * GetDeltaTime();
-        if (constantBufferData_.offset.x > offsetBounds)
-        {
-            constantBufferData_.offset.x = -offsetBounds;
-        }
-        memcpy(cbvDataBegin_, &constantBufferData_, sizeof(constantBufferData_));
-
         // Command list allocators can only be reset when the associated command lists have finished execution on the GPU.
         // Apps shoud use fences to determin GPU execution progress, which we will do at the end of this function.
-        ThrowIfFailed(commandAllocator_->Reset());
+        ThrowIfFailed(commandAllocator_->Reset(), "Reset command allocator");
 
         // After ExecuteCommandList() has been called on a particular command list,
         // that command list can then be reset at any time before re-recoding.
-        ThrowIfFailed(commandList_->Reset(commandAllocator_.Get(), pipelineState_.Get()));
+        ThrowIfFailed(commandList_->Reset(commandAllocator_.Get(), pipelineState_.Get()), "Reset command list");
 
         // Indicate the the back buffer will be used as a render target.
         const UINT backBufferIndex = swapChain_->GetCurrentBackBufferIndex();
@@ -369,10 +300,6 @@ public:
 
         // Set necessary state.
         commandList_->SetGraphicsRootSignature(rootSignature_.Get());
-        // 绑定数据
-        ID3D12DescriptorHeap* descriptorHeaps[] = { cbvHeap_.Get() };
-        commandList_->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
-        commandList_->SetGraphicsRootDescriptorTable(0, cbvHeap_->GetGPUDescriptorHandleForHeapStart());
 
         CD3DX12_VIEWPORT viewport(0.0f, 0.0f, static_cast<float>(GetConfig().width), static_cast<float>(GetConfig().height));
         CD3DX12_RECT scissorRect(0, 0, GetConfig().width, GetConfig().height);
@@ -391,7 +318,7 @@ public:
         commandList_->ResourceBarrier(1, &toPresentBarrier);
 
         // Command list is expected to be closed before calling Reset again.
-        ThrowIfFailed(commandList_->Close());
+        ThrowIfFailed(commandList_->Close(), "Clost command list");
 
         // Execulte the command list
         ID3D12CommandList* commandLists[] = { commandList_.Get() };
@@ -400,41 +327,53 @@ public:
         // Swap buffers
         if (GetConfig().vsync)
         {
-            ThrowIfFailed(swapChain_->Present(1, 0));
+            ThrowIfFailed(swapChain_->Present(1, 0), "Present");
         }
         else
         {
-            ThrowIfFailed(swapChain_->Present(0, DXGI_PRESENT_ALLOW_TEARING));
+            ThrowIfFailed(swapChain_->Present(0, DXGI_PRESENT_ALLOW_TEARING), "Present");
         }
 
+        WaitForPreviousFrame("UPDATE");
+    }
+
+    virtual void Quit() override
+    {
+        WaitForPreviousFrame("QUIT");
+        CloseHandle(fenceEventHandle_);
+    }
+
+    void WaitForPreviousFrame(const std::string& caption)
+    {
         // Add an instruction to the command queue to set a new fence point by instructing 'fence_' to wait for the 'fenceValue_'.
         // `fence_` value won't be set by GPU until it finishes processing all the commands prior to this `Signal()`.
         const UINT64 fenceValueToWaitFor = fenceValue_;
-        ThrowIfFailed(commandQueue_->Signal(fence_.Get(), fenceValueToWaitFor));
+        ThrowIfFailed(commandQueue_->Signal(fence_.Get(), fenceValueToWaitFor), "Signal");
         fenceValue_++;
 
         // Wait until the GPU has completed commands up to this fence point.
         if (fence_->GetCompletedValue() < fenceValueToWaitFor)
         {
             // Fire event when GPU hits current fence.
-            ThrowIfFailed(fence_->SetEventOnCompletion(fenceValueToWaitFor, fenceEventHandle_));
+            ThrowIfFailed(fence_->SetEventOnCompletion(fenceValueToWaitFor, fenceEventHandle_), "SetEventOnCompletion");
 
+            std::chrono::high_resolution_clock::time_point startTimePoint = std::chrono::high_resolution_clock::now();
             // Wait until the created event is fired
             WaitForSingleObject(fenceEventHandle_, INFINITE);
+            
+            //std::cout << "FPS: " << GetAverageFPS() << std::endl;
+            auto endTimePoint = std::chrono::high_resolution_clock::now();
+            auto interval = std::chrono::duration_cast<std::chrono::duration<float, std::micro>>(endTimePoint - startTimePoint).count();
+            std::cout << "[" << caption << "] " << "fenced, wait value " << fenceValueToWaitFor << " for " << interval << " microseconds" << std::endl;
         }
-    }
-
-    virtual void Quit() override
-    {
-        constantBuffer_->Unmap(0, nullptr);
-        CloseHandle(fenceEventHandle_);
     }
 };
 
-CREATE_SKETCH(HelloQuad,
+CREATE_SKETCH(HelloFrameBuffering,
     [](sketch::SketchBase::Config& config)
     {
         config.width = 800;
         config.height = 450;
+        config.vsync = false;
     }
 )
