@@ -79,6 +79,7 @@ class HelloQuad : public sketch::SketchBase
     ComPtr<ID3D12GraphicsCommandList> commandList_;
     ComPtr<ID3D12Fence> fence_;
     UINT64 fenceValue_;
+    HANDLE fenceEventHandle_;
     ComPtr<ID3D12RootSignature> rootSignature_;
     ComPtr<ID3D12PipelineState> pipelineState_;
     ComPtr<ID3D12Resource> vertexBuffer_;
@@ -318,6 +319,7 @@ public:
         // Fence
         ThrowIfFailed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)));
         fenceValue_ = 1;
+        fenceEventHandle_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 
         // Add an instruction to the command queue to set a new fence point by
         // instructing 'fence_' to wait for the 'fenceValue_'.
@@ -328,13 +330,11 @@ public:
         // Wait until the GPU has completed commands up to this fence point.
         if (fence_->GetCompletedValue() < fenceValueToWaitFor)
         {
-            HANDLE eventHandle = CreateEventW(nullptr, FALSE, FALSE, nullptr);
             // Fire event when GPU hits current fence.
-            ThrowIfFailed(fence_->SetEventOnCompletion(fenceValueToWaitFor, eventHandle));
+            ThrowIfFailed(fence_->SetEventOnCompletion(fenceValueToWaitFor, fenceEventHandle_));
 
             // Wait until the created event is fired
-            WaitForSingleObject(eventHandle, INFINITE);
-            CloseHandle(eventHandle);
+            WaitForSingleObject(fenceEventHandle_, INFINITE);
         }
     }
 
@@ -416,19 +416,18 @@ public:
         // Wait until the GPU has completed commands up to this fence point.
         if (fence_->GetCompletedValue() < fenceValueToWaitFor)
         {
-            HANDLE eventHandle = CreateEventW(nullptr, FALSE, FALSE, nullptr);
             // Fire event when GPU hits current fence.
-            ThrowIfFailed(fence_->SetEventOnCompletion(fenceValueToWaitFor, eventHandle));
+            ThrowIfFailed(fence_->SetEventOnCompletion(fenceValueToWaitFor, fenceEventHandle_));
 
             // Wait until the created event is fired
-            WaitForSingleObject(eventHandle, INFINITE);
-            CloseHandle(eventHandle);
+            WaitForSingleObject(fenceEventHandle_, INFINITE);
         }
     }
 
     virtual void Quit() override
     {
         constantBuffer_->Unmap(0, nullptr);
+        CloseHandle(fenceEventHandle_);
     }
 };
 
