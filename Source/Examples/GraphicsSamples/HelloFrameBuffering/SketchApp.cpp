@@ -54,7 +54,7 @@ inline void ThrowIfFailed(HRESULT hr, const std::string& context = "")
 class HelloFrameBuffering : public sketch::SketchBase
 {
     static const UINT kNumSwapChainBuffers = 2;
-    static const UINT kNumFrames = 2;
+    static const UINT kNumFrames = 3;
 
     struct Vertex
     {
@@ -67,15 +67,16 @@ class HelloFrameBuffering : public sketch::SketchBase
     ComPtr<ID3D12DescriptorHeap> rtvHeap_;
     UINT rtvDescriptorSize_;
     ComPtr<ID3D12Resource> swapChainBuffers_[kNumSwapChainBuffers];
-    ComPtr<ID3D12CommandAllocator> commandAllocator_;
+    ComPtr<ID3D12CommandAllocator> commandAllocators_[kNumFrames];
     ComPtr<ID3D12GraphicsCommandList> commandList_;
     ComPtr<ID3D12Fence> fence_;
-    UINT64 fenceValue_;
+    UINT64 fenceValues_[kNumFrames];
     HANDLE fenceEventHandle_;
     ComPtr<ID3D12RootSignature> rootSignature_;
     ComPtr<ID3D12PipelineState> pipelineState_;
     ComPtr<ID3D12Resource> vertexBuffer_;
     D3D12_VERTEX_BUFFER_VIEW vertexBufferView_;
+    UINT frameIndex_;
 
 public:
     virtual void Init() override
@@ -211,11 +212,19 @@ public:
 
         ThrowIfFailed(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineState_)), "CreateGraphicsPipelineState");
 
-        // Command allocator
-        ThrowIfFailed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator_)), "CreateCommandAllocator");
+        // Frame resources
+        frameIndex_ = 0;
+        for (UINT index = 0; index < kNumFrames; index++)
+        {
+            // Command allocator
+            ThrowIfFailed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocators_[index])), "CreateCommandAllocator");
+
+            // Fence value
+            fenceValues_[index] = 0;
+        }
 
         // Command list
-        ThrowIfFailed(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator_.Get(), pipelineState_.Get(), IID_PPV_ARGS(&commandList_)), "CreateCommandList");
+        ThrowIfFailed(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocators_[frameIndex_].Get(), pipelineState_.Get(), IID_PPV_ARGS(&commandList_)), "CreateCommandList");
 
         // Create the vertex buffer.
 
@@ -272,22 +281,25 @@ public:
         commandQueue_->ExecuteCommandLists(_countof(commandLists), commandLists);
 
         // Fence
-        ThrowIfFailed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)), "CreateFence");
-        fenceValue_ = 1;
+        ThrowIfFailed(device->CreateFence(fenceValues_[frameIndex_], D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)), "CreateFence");
         fenceEventHandle_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 
-        WaitForPreviousFrame("INIT");
+        DebugInfo("INIT");
+
+        WaitForGPUOnCurrentFrame();
     }
 
     virtual void Update() override
     {
+        Synchonize();
+
         // Command list allocators can only be reset when the associated command lists have finished execution on the GPU.
         // Apps shoud use fences to determin GPU execution progress, which we will do at the end of this function.
-        ThrowIfFailed(commandAllocator_->Reset(), "Reset command allocator");
+        ThrowIfFailed(commandAllocators_[frameIndex_]->Reset(), "Reset command allocator");
 
         // After ExecuteCommandList() has been called on a particular command list,
         // that command list can then be reset at any time before re-recoding.
-        ThrowIfFailed(commandList_->Reset(commandAllocator_.Get(), pipelineState_.Get()), "Reset command list");
+        ThrowIfFailed(commandList_->Reset(commandAllocators_[frameIndex_].Get(), pipelineState_.Get()), "Reset command list");
 
         // Indicate the the back buffer will be used as a render target.
         const UINT backBufferIndex = swapChain_->GetCurrentBackBufferIndex();
@@ -334,38 +346,95 @@ public:
             ThrowIfFailed(swapChain_->Present(0, DXGI_PRESENT_ALLOW_TEARING), "Present");
         }
 
-        WaitForPreviousFrame("UPDATE");
+        MarkFence();
     }
 
     virtual void Quit() override
     {
-        WaitForPreviousFrame("QUIT");
+        WaitForGPUOnCurrentFrame();
         CloseHandle(fenceEventHandle_);
     }
 
-    void WaitForPreviousFrame(const std::string& caption)
+    void DebugInfo(const std::string& caption)
     {
-        // Add an instruction to the command queue to set a new fence point by instructing 'fence_' to wait for the 'fenceValue_'.
-        // `fence_` value won't be set by GPU until it finishes processing all the commands prior to this `Signal()`.
-        const UINT64 fenceValueToWaitFor = fenceValue_;
-        ThrowIfFailed(commandQueue_->Signal(fence_.Get(), fenceValueToWaitFor), "Signal");
-        fenceValue_++;
+#ifndef NDEBUG
+        std::cout << "[" << caption << "] " << fence_->GetCompletedValue() << ", [ ";
+        for (UINT index = 0; index < kNumFrames; index++)
+        {
+            if (index > 0)
+            {
+                std::cout << ", ";
+            }
 
-        // Wait until the GPU has completed commands up to this fence point.
+            if (index == frameIndex_)
+            {
+                std::cout << "(";
+            }
+            std::cout << fenceValues_[index];
+            if (index == frameIndex_)
+            {
+                std::cout << ")";
+            }
+        }
+        std::cout << " ]" << std::endl;
+#else
+        (void)caption;
+#endif // NDEBUG
+    }
+
+    void Synchonize()
+    {
+        DebugInfo("TEST");
+
+        const UINT64 fenceValueToWaitFor = fenceValues_[frameIndex_];
         if (fence_->GetCompletedValue() < fenceValueToWaitFor)
         {
-            // Fire event when GPU hits current fence.
+            // Wait until the fence has been processed.
             ThrowIfFailed(fence_->SetEventOnCompletion(fenceValueToWaitFor, fenceEventHandle_), "SetEventOnCompletion");
 
-            std::chrono::high_resolution_clock::time_point startTimePoint = std::chrono::high_resolution_clock::now();
+#ifndef NDEBUG
+            auto startTimePoint = std::chrono::high_resolution_clock::now();
+#endif // NDEBUG
+
             // Wait until the created event is fired
             WaitForSingleObject(fenceEventHandle_, INFINITE);
-            
-            //std::cout << "FPS: " << GetAverageFPS() << std::endl;
+
+#ifndef NDEBUG
             auto endTimePoint = std::chrono::high_resolution_clock::now();
             auto interval = std::chrono::duration_cast<std::chrono::duration<float, std::micro>>(endTimePoint - startTimePoint).count();
-            std::cout << "[" << caption << "] " << "fenced, wait value " << fenceValueToWaitFor << " for " << interval << " microseconds" << std::endl;
+            std::cout << "[BLOCKED] " << " wait value " << fenceValueToWaitFor << " for " << interval << " microseconds" << std::endl;
+#endif // NDEBUG
         }
+
+        // Increment the fence value for the next frame
+        frameIndex_ = (frameIndex_ + 1) % kNumFrames;
+        fenceValues_[frameIndex_] = fenceValueToWaitFor + 1;
+
+        DebugInfo("MOVE");
+    }
+
+    void MarkFence()
+    {
+        // Schedule a Signal command in the queue.
+        const UINT64 fenceValueToWaitFor = fenceValues_[frameIndex_];
+        ThrowIfFailed(commandQueue_->Signal(fence_.Get(), fenceValueToWaitFor), "Signal");
+    }
+
+    void WaitForGPUOnCurrentFrame()
+    {
+        // Increment the fence value for the current frame.
+        fenceValues_[frameIndex_]++;
+
+        // Schedule a Signal command in the queue.
+        const UINT64 fenceValueToWaitFor = fenceValues_[frameIndex_];
+        ThrowIfFailed(commandQueue_->Signal(fence_.Get(), fenceValueToWaitFor), "Signal");
+
+        // Wait until the fence has been processed.
+        ThrowIfFailed(fence_->SetEventOnCompletion(fenceValueToWaitFor, fenceEventHandle_), "SetEventOnCompletion");
+
+        WaitForSingleObject(fenceEventHandle_, INFINITE);
+
+        DebugInfo("WAIT");
     }
 };
 
