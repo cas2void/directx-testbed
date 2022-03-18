@@ -9,9 +9,10 @@ namespace sketch
 class SketchBase
 {
 public:
-    virtual void Init() {}
-    virtual void Update() {}
-    virtual void Quit() {}
+    virtual void OnInit() {}
+    virtual void OnUpdate() {}
+    virtual void OnQuit() {}
+    virtual void OnResize(int width, int height) { (void)width; (void)height; }
 
     //
     // Config
@@ -34,8 +35,9 @@ private:
     // Timing
     //
 public:
-    void Reset();
-    void Tick();
+    //
+    // Framework interfaces, do not call these in apps.
+    //
 
     // dt in seconds
     float GetDeltaTime() const;
@@ -57,6 +59,20 @@ public:
 private:
     void Statistics();
     float averageFrameTime_;
+
+    //
+    // Framework interfaces, do not call these in apps.
+    //
+public:
+    void Init();
+    void Update();
+    void Quit();
+    void Resize(int width, int height);
+
+    void Reset();
+    void Tick();
+    void Pause();
+    void Resume();
 };
 
 }; // namespace sketch

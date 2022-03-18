@@ -89,7 +89,7 @@ class HelloQuad : public sketch::SketchBase
     UINT8* cbvDataBegin_;
 
 public:
-    virtual void Init() override
+    virtual void OnInit() override
     {
         UINT dxgiFactoryFlag = 0;
 
@@ -338,7 +338,7 @@ public:
         }
     }
 
-    virtual void Update() override
+    virtual void OnUpdate() override
     {
         const float translationSpeed = 0.3f;
         const float offsetBounds = 1.25f;
@@ -424,7 +424,7 @@ public:
         }
     }
 
-    virtual void Quit() override
+    virtual void OnQuit() override
     {
         constantBuffer_->Unmap(0, nullptr);
         CloseHandle(fenceEventHandle_);

@@ -78,7 +78,7 @@ class HelloSync : public sketch::SketchBase
     D3D12_VERTEX_BUFFER_VIEW vertexBufferView_;
 
 public:
-    virtual void Init() override
+    virtual void OnInit() override
     {
         UINT dxgiFactoryFlag = 0;
 
@@ -279,7 +279,7 @@ public:
         WaitForPreviousFrame("INIT");
     }
 
-    virtual void Update() override
+    virtual void OnUpdate() override
     {
         // Command list allocators can only be reset when the associated command lists have finished execution on the GPU.
         // Apps shoud use fences to determin GPU execution progress, which we will do at the end of this function.
@@ -337,7 +337,7 @@ public:
         WaitForPreviousFrame("UPDATE");
     }
 
-    virtual void Quit() override
+    virtual void OnQuit() override
     {
         WaitForPreviousFrame("QUIT");
         CloseHandle(fenceEventHandle_);

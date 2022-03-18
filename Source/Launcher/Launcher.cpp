@@ -1,21 +1,70 @@
 #include "Launcher.h"
 
 #include <stdexcept>
+#include <iostream>
 
 #include "SketchBase.h"
 
 static HWND SMainWindow = nullptr;
+static std::shared_ptr<sketch::SketchBase> SSketchInstance;
 
 namespace launcher
 {
 
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
+	static bool bSleeping = false;
+	static bool bSizingOrMoving = false;
+
 	switch (message)
 	{
+	case WM_SIZE:
+	{
+		switch (wParam)
+		{
+		case SIZE_MINIMIZED:
+		{
+			bSleeping = true;
+			SSketchInstance->Pause();
+		}
+			break;
+
+		case SIZE_MAXIMIZED:
+		case SIZE_RESTORED:
+			if (!bSizingOrMoving)
+			{
+				if (bSleeping)
+				{
+					bSleeping = false;
+					SSketchInstance->Resume();
+				}
+				SSketchInstance->Resize(LOWORD(lParam), HIWORD(lParam));
+			}
+			break;
+
+		default:
+			break;
+		}
+	}
+		break;
+
+	case WM_ENTERSIZEMOVE:
+		bSizingOrMoving = true;
+		break;
+
+	case WM_EXITSIZEMOVE:
+	{
+		bSizingOrMoving = false;
+		RECT rc;
+		GetClientRect(hWnd, &rc);
+		SSketchInstance->Resize(static_cast<int>(rc.right - rc.left), static_cast<int>(rc.bottom - rc.top));
+	}
+		break;
+
 	case WM_DESTROY:
 		PostQuitMessage(0);
 		break;
+
 	default:
 		return DefWindowProc(hWnd, message, wParam, lParam);
 	}
@@ -24,6 +73,8 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 
 static void RunInternal(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& sketchName, std::function<void(sketch::SketchBase::Config&)> configurator)
 {
+	SSketchInstance = sketchInstance;
+
 	if (configurator)
 	{
 		sketchInstance->Configurate(configurator);

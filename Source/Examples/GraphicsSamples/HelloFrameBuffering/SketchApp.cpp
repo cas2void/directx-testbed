@@ -79,7 +79,7 @@ class HelloFrameBuffering : public sketch::SketchBase
     UINT frameIndex_;
 
 public:
-    virtual void Init() override
+    virtual void OnInit() override
     {
         UINT dxgiFactoryFlag = 0;
 
@@ -289,7 +289,7 @@ public:
         WaitForGPUOnCurrentFrame();
     }
 
-    virtual void Update() override
+    virtual void OnUpdate() override
     {
         Synchonize();
 
@@ -349,7 +349,7 @@ public:
         MarkFence();
     }
 
-    virtual void Quit() override
+    virtual void OnQuit() override
     {
         WaitForGPUOnCurrentFrame();
         CloseHandle(fenceEventHandle_);

@@ -163,7 +163,7 @@ class HelloWorld : public sketch::SketchBase
     UINT64 fenceValue_;
 
 public:
-    virtual void Init() override
+    virtual void OnInit() override
     {
         UINT dxgiFactoryFlag = 0;
 
@@ -267,7 +267,7 @@ public:
         fenceValue_ = 1;
     }
 
-    virtual void Update() override
+    virtual void OnUpdate() override
     {
         // Command list allocators can only be reset when the associated command lists have finished execution on the GPU.
         // Apps shoud use fences to determin GPU execution progress, which we will do at the end of this function.

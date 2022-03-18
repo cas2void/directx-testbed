@@ -77,7 +77,7 @@ class Fullscreen : public sketch::SketchBase
     D3D12_VERTEX_BUFFER_VIEW vertexBufferView_;
 
 public:
-    virtual void Init() override
+    virtual void OnInit() override
     {
         UINT dxgiFactoryFlag = 0;
 
@@ -281,7 +281,7 @@ public:
         FlushCommandQueue();
     }
 
-    virtual void Update() override
+    virtual void OnUpdate() override
     {
         ShowInfo();
         // Command list allocators can only be reset when the associated command lists have finished execution on the GPU.
@@ -342,10 +342,15 @@ public:
         FlushCommandQueue();
     }
 
-    virtual void Quit() override
+    virtual void OnQuit() override
     {
         FlushCommandQueue();
         CloseHandle(fenceEventHandle_);
+    }
+    
+    virtual void OnResize(int width, int height) override
+    {
+        std::cout << "Resize " << width << ", " << height << std::endl;
     }
 
     void ShowInfo()
