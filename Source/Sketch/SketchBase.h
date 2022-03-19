@@ -20,16 +20,50 @@ public:
 public:
     struct Config
     {
-        int width = 960;
-        int height = 540;
-        bool vsync = true;
+        int X = 480;
+        int Y = 270;
+        int Width = 960;
+        int Height = 540;
+        bool Vsync = true;
+        bool WindowModeSwitch = false;
+        bool Fullscreen = false;
     };
 
-    void Configurate(std::function<void(Config&)> configurator);
+    void SetConfig(std::function<void(Config&)> configSetter);
     const Config& GetConfig() const;
 
 private:
     Config config_;
+
+    //
+    // Feature
+    //
+public:
+    struct Feature
+    {
+        bool Tearing = false;
+    };
+
+    void SetFeature(std::function<void(Feature&)> featureSetter);
+    const Feature& GetFeature() const;
+
+protected:
+    Feature feature_;
+
+    //
+    // State
+    //
+public:
+    struct State
+    {
+        int ViewportWidth;
+        int ViewportHeight;
+    };
+
+    const State& GetState() const;
+
+private:
+    State state_;
 
     //
     // Timing

@@ -7,14 +7,29 @@ using SecondsAsFloat = std::chrono::duration<float>;
 namespace sketch
 {
 
-void SketchBase::Configurate(std::function<void(Config&)> configurator)
+void SketchBase::SetConfig(std::function<void(Config&)> configSetter)
 {
-    configurator(config_);
+    configSetter(config_);
 }
 
 const SketchBase::Config& SketchBase::GetConfig() const
 {
     return config_;
+}
+
+void SketchBase::SetFeature(std::function<void(Feature&)> featureSetter)
+{
+    featureSetter(feature_);
+}
+
+const SketchBase::Feature& SketchBase::GetFeature() const
+{
+    return feature_;
+}
+
+const SketchBase::State& SketchBase::GetState() const
+{
+    return state_;
 }
 
 float SketchBase::GetDeltaTime() const
@@ -79,9 +94,18 @@ void SketchBase::Quit()
 
 void SketchBase::Resize(int width, int height)
 {
-    config_.width = width;
-    config_.height = height;
-    OnResize(width, height);
+    static int previousWidth = 0;
+    static int previousHeight = 0;
+
+    if (width != previousWidth || height != previousHeight)
+    {
+        previousWidth = width;
+        previousHeight = height;
+
+        state_.ViewportWidth = width;
+        state_.ViewportHeight = height;
+        OnResize(width, height);
+    }
 }
 
 void SketchBase::Reset()

@@ -1,7 +1,6 @@
 #include "Launcher.h"
 
 #include <stdexcept>
-#include <iostream>
 
 #include "SketchBase.h"
 
@@ -18,6 +17,16 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 
 	switch (message)
 	{
+	case WM_SYSKEYDOWN:
+		// https://docs.microsoft.com/en-us/windows/win32/learnwin32/keyboard-input?redirectedfrom=MSDN
+		// One flag that might be useful is bit 30, the "previous key state" flag, which is set to 1 for repeated key-down messages.
+		if (wParam == VK_RETURN && !(lParam & (1 << 30)) && 
+			SSketchInstance->GetConfig().WindowModeSwitch && SSketchInstance->GetFeature().Tearing)
+		{
+			ToggleFullscreen();
+		}
+		break;
+
 	case WM_SIZE:
 	{
 		switch (wParam)
@@ -38,7 +47,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 					bSleeping = false;
 					SSketchInstance->Resume();
 				}
-				SSketchInstance->Resize(LOWORD(lParam), HIWORD(lParam));
+				SSketchInstance->Resize(static_cast<int>(LOWORD(lParam)), static_cast<int>(HIWORD(lParam)));
 			}
 			break;
 
@@ -49,12 +58,15 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 		break;
 
 	case WM_ENTERSIZEMOVE:
+	{
 		bSizingOrMoving = true;
+	}
 		break;
 
 	case WM_EXITSIZEMOVE:
 	{
 		bSizingOrMoving = false;
+
 		RECT rc;
 		GetClientRect(hWnd, &rc);
 		SSketchInstance->Resize(static_cast<int>(rc.right - rc.left), static_cast<int>(rc.bottom - rc.top));
@@ -71,13 +83,31 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 	return 0;
 }
 
+static RECT GetFullscreenRect()
+{
+	SetWindowLong(SMainWindow, GWL_STYLE, WS_OVERLAPPED);
+
+	DEVMODE devMode = {};
+	devMode.dmSize = sizeof(DEVMODE);
+	EnumDisplaySettings(nullptr, ENUM_CURRENT_SETTINGS, &devMode);
+
+	RECT fullscreenWindowRect = {
+		devMode.dmPosition.x,
+		devMode.dmPosition.y,
+		devMode.dmPosition.x + static_cast<LONG>(devMode.dmPelsWidth),
+		devMode.dmPosition.y + static_cast<LONG>(devMode.dmPelsHeight)
+	};
+
+	return fullscreenWindowRect;
+}
+
 static void RunInternal(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& sketchName, std::function<void(sketch::SketchBase::Config&)> configurator)
 {
 	SSketchInstance = sketchInstance;
 
 	if (configurator)
 	{
-		sketchInstance->Configurate(configurator);
+		sketchInstance->SetConfig(configurator);
 	}
 
 	HINSTANCE hInstance = GetModuleHandleW(nullptr);
@@ -102,15 +132,31 @@ static void RunInternal(std::shared_ptr<sketch::SketchBase> sketchInstance, cons
 	std::wstring sketchNameWide(count, 0);
 	MultiByteToWideChar(CP_UTF8, 0, sketchName.c_str(), (int)sketchName.length(), &sketchNameWide[0], count);
 
-	RECT rc = { 0, 0, (LONG)sketchInstance->GetConfig().width, (LONG)sketchInstance->GetConfig().height };
-	AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
+	RECT rc = { 
+		static_cast<LONG>(sketchInstance->GetConfig().X), 
+		static_cast<LONG>(sketchInstance->GetConfig().Y),
+		static_cast<LONG>(sketchInstance->GetConfig().X + sketchInstance->GetConfig().Width), 
+		static_cast<LONG>(sketchInstance->GetConfig().Y + sketchInstance->GetConfig().Height)
+	};
+	DWORD style = WS_OVERLAPPEDWINDOW;
+	AdjustWindowRect(&rc, style, FALSE);
 
-	SMainWindow = CreateWindowW(wcex.lpszClassName, sketchNameWide.c_str(), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
+	SMainWindow = CreateWindowW(wcex.lpszClassName, sketchNameWide.c_str(), style, rc.left, rc.top,
 		rc.right - rc.left, rc.bottom - rc.top, nullptr, nullptr, hInstance, nullptr);
+
+	int cmdShow = SW_SHOWDEFAULT;
+	if (SSketchInstance->GetConfig().Fullscreen)
+	{
+		SetWindowLong(SMainWindow, GWL_STYLE, WS_OVERLAPPED);
+		RECT rect = GetFullscreenRect();
+		SetWindowPos(SMainWindow, nullptr, rect.left, rect.top,
+			rect.right - rect.left, rect.bottom - rect.top, SWP_NOACTIVATE | SWP_NOSIZE);
+		cmdShow = SW_MAXIMIZE;
+	}
 
 	sketchInstance->Init();
 
-	ShowWindow(SMainWindow, SW_SHOWDEFAULT);
+	ShowWindow(SMainWindow, cmdShow);
 	UpdateWindow(SMainWindow);
 
 	sketchInstance->Reset();
@@ -133,11 +179,11 @@ static void RunInternal(std::shared_ptr<sketch::SketchBase> sketchInstance, cons
 	sketchInstance->Quit();
 }
 
-void Run(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& sketchName, std::function<void(sketch::SketchBase::Config&)> configurator)
+void Run(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& sketchName, std::function<void(sketch::SketchBase::Config&)> configSetter)
 {
 	try
 	{
-		RunInternal(sketchInstance, sketchName, configurator);
+		RunInternal(sketchInstance, sketchName, configSetter);
 	}
 	catch (const std::runtime_error& e)
 	{
@@ -152,6 +198,39 @@ void Run(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& 
 HWND GetMainWindow()
 {
 	return SMainWindow;
+}
+
+void ToggleFullscreen()
+{
+	static bool fullscreen = SSketchInstance->GetConfig().Fullscreen;
+	static RECT windowModeRect = {
+		static_cast<LONG>(SSketchInstance->GetConfig().X),
+		static_cast<LONG>(SSketchInstance->GetConfig().Y),
+		static_cast<LONG>(SSketchInstance->GetConfig().X + SSketchInstance->GetConfig().Width),
+		static_cast<LONG>(SSketchInstance->GetConfig().Y + SSketchInstance->GetConfig().Height)
+	};
+
+	fullscreen = !fullscreen;
+
+	int cmdShow = SW_SHOWDEFAULT;
+	RECT rect = windowModeRect;
+	if (fullscreen)
+	{
+		GetWindowRect(SMainWindow, &windowModeRect);
+		
+		rect = GetFullscreenRect();
+		cmdShow = SW_MAXIMIZE;
+
+		SetWindowLong(SMainWindow, GWL_STYLE, WS_OVERLAPPED);
+	}
+	else
+	{
+		SetWindowLong(SMainWindow, GWL_STYLE, WS_OVERLAPPEDWINDOW);
+	}
+
+	SetWindowPos(SMainWindow, nullptr, rect.left, rect.top,
+		rect.right - rect.left, rect.bottom - rect.top, SWP_NOACTIVATE | SWP_FRAMECHANGED);
+	ShowWindow(SMainWindow, cmdShow);
 }
 
 }; // namespace launcher

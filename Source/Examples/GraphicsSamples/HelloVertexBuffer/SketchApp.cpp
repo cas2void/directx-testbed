@@ -136,8 +136,8 @@ public:
 
         // Swap chain
         DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
-        swapChainDesc.Width = GetConfig().width;
-        swapChainDesc.Height = GetConfig().height;
+        swapChainDesc.Width = GetConfig().Width;
+        swapChainDesc.Height = GetConfig().Height;
         swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         swapChainDesc.SampleDesc.Count = 1;
         swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
@@ -147,7 +147,7 @@ public:
         // https://docs.microsoft.com/en-us/windows/win32/direct3ddxgi/variable-refresh-rate-displays
         BOOL allowTearing = FALSE;
         ThrowIfFailed(dxgiFactory6->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing)));
-        swapChainDesc.Flags = GetConfig().vsync ? 0 : DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+        swapChainDesc.Flags = GetConfig().Vsync ? 0 : DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
 
         ComPtr<IDXGISwapChain1> swapChain;
         ThrowIfFailed(dxgiFactory6->CreateSwapChainForHwnd(commandQueue_.Get(), launcher::GetMainWindow(), &swapChainDesc, nullptr, nullptr, swapChain.GetAddressOf()));
@@ -242,7 +242,7 @@ public:
 
         // Create the vertex buffer.
 
-        float aspectRatio = (float)GetConfig().width / GetConfig().height;
+        float aspectRatio = (float)GetConfig().Width / GetConfig().Height;
         // Define the geometry for a triangle.
         Vertex triangleVertices[] =
         {
@@ -373,8 +373,8 @@ public:
         commandList_->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
         commandList_->SetGraphicsRootDescriptorTable(0, cbvHeap_->GetGPUDescriptorHandleForHeapStart());
 
-        CD3DX12_VIEWPORT viewport(0.0f, 0.0f, static_cast<float>(GetConfig().width), static_cast<float>(GetConfig().height));
-        CD3DX12_RECT scissorRect(0, 0, GetConfig().width, GetConfig().height);
+        CD3DX12_VIEWPORT viewport(0.0f, 0.0f, static_cast<float>(GetConfig().Width), static_cast<float>(GetConfig().Height));
+        CD3DX12_RECT scissorRect(0, 0, GetConfig().Width, GetConfig().Height);
         commandList_->RSSetViewports(1, &viewport);
         commandList_->RSSetScissorRects(1, &scissorRect);
 
@@ -397,7 +397,7 @@ public:
         commandQueue_->ExecuteCommandLists(_countof(commandLists), commandLists);
 
         // Swap buffers
-        if (GetConfig().vsync)
+        if (GetConfig().Vsync)
         {
             ThrowIfFailed(swapChain_->Present(1, 0));
         }
@@ -434,7 +434,7 @@ public:
 CREATE_SKETCH(HelloVertexBuffer,
     [](sketch::SketchBase::Config& config)
     {
-        config.width = 800;
-        config.height = 450;
+        config.Width = 800;
+        config.Height = 450;
     }
 )

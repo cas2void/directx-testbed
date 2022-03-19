@@ -61,6 +61,7 @@ class Fullscreen : public sketch::SketchBase
         DirectX::XMFLOAT4 color;
     };
 
+    ComPtr<ID3D12Device> device_;
     ComPtr<ID3D12CommandQueue> commandQueue_;
     ComPtr<IDXGISwapChain3> swapChain_;
     ComPtr<ID3D12DescriptorHeap> rtvHeap_;
@@ -83,7 +84,7 @@ public:
 
 #ifndef NDEBUG
         // Enable the debug layer (requires the Graphics Tools "optional feature").
-        // NOTE: Enabling the debug layer after device creation will invalidate the active device.
+        // NOTE: Enabling the debug layer after device_ creation will invalidate the active device_.
         // When the debug layer is enabled, D3D will send debug messages to the Visual Studio output window like the following :
         // D3D12 ERROR : ID3D12CommandList::Reset : Reset fails because the command list was not closed.
         {
@@ -107,26 +108,25 @@ public:
         ThrowIfFailed(dxgiFactory6->EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter)), "EnumAdapterByGpuPreference");
 
         // Device
-        ComPtr<ID3D12Device> device;
-        ThrowIfFailed(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)), "D3D12CreateDevice");
+        ThrowIfFailed(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device_)), "D3D12CreateDevice");
 
         // MSAA support
         D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS qualityLevels = {};
         qualityLevels.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         qualityLevels.SampleCount = 4;
         qualityLevels.NumQualityLevels = 0;
-        ThrowIfFailed(device->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &qualityLevels, sizeof(qualityLevels)), "CheckFeatureSupport");
+        ThrowIfFailed(device_->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &qualityLevels, sizeof(qualityLevels)), "CheckFeatureSupport");
 
         // Command queue
         D3D12_COMMAND_QUEUE_DESC queueDesc = {};
         queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 
-        ThrowIfFailed(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&commandQueue_)), "CreateCommandQueue");
+        ThrowIfFailed(device_->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&commandQueue_)), "CreateCommandQueue");
 
         // Swap chain
         DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
-        swapChainDesc.Width = GetConfig().width;
-        swapChainDesc.Height = GetConfig().height;
+        swapChainDesc.Width = GetConfig().Width;
+        swapChainDesc.Height = GetConfig().Height;
         swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         swapChainDesc.SampleDesc.Count = 1;
         swapChainDesc.Scaling = DXGI_SCALING_NONE;
@@ -137,7 +137,9 @@ public:
         // https://docs.microsoft.com/en-us/windows/win32/direct3ddxgi/variable-refresh-rate-displays
         BOOL allowTearing = FALSE;
         ThrowIfFailed(dxgiFactory6->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing)), "CheckFeatureSupport");
-        swapChainDesc.Flags = GetConfig().vsync ? 0 : DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+        swapChainDesc.Flags = allowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
+
+        SetFeature([allowTearing](Feature& feature){ feature.Tearing = allowTearing; });
 
         ComPtr<IDXGISwapChain1> swapChain;
         ThrowIfFailed(dxgiFactory6->CreateSwapChainForHwnd(commandQueue_.Get(), launcher::GetMainWindow(), &swapChainDesc, nullptr, nullptr, swapChain.GetAddressOf()), "CreateSwapChainForHwnd");
@@ -150,19 +152,14 @@ public:
         rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
         rtvHeapDesc.NumDescriptors = kNumSwapChainBuffers;
 
-        ThrowIfFailed(device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rtvHeap_)), "CreateDescriptorHeap");
+        ThrowIfFailed(device_->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rtvHeap_)), "CreateDescriptorHeap");
 
         // Descriptor size
-        rtvDescriptorSize_ = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+        rtvDescriptorSize_ = device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
         // Create frame resources, such as RTV/DSV, for each back buffer.
-        CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(rtvHeap_->GetCPUDescriptorHandleForHeapStart());
-        for (UINT i = 0; i < kNumSwapChainBuffers; i++)
-        {
-            ThrowIfFailed(swapChain_->GetBuffer(i, IID_PPV_ARGS(&swapChainBuffers_[i])), "GetBuffer");
-            device->CreateRenderTargetView(swapChainBuffers_[i].Get(), nullptr, rtvHandle);
-            rtvHandle.Offset(1, rtvDescriptorSize_);
-        }
+        // Delay to OnSize()
+        //CreateRTV();
 
         // Root Signagure, consisting of emptry root parameter.
 
@@ -179,7 +176,7 @@ public:
 
         ComPtr<ID3DBlob> signature;
         ThrowIfFailed(D3D12SerializeVersionedRootSignature(&rootSignatureDesc, signature.GetAddressOf(), nullptr), "D3D12SerializeVersionedRootSignature");
-        ThrowIfFailed(device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&rootSignature_)), "CreateRootSignature");
+        ThrowIfFailed(device_->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&rootSignature_)), "CreateRootSignature");
 
         // Compile and load shaders
         // Already compiled as g_VSMain, g_PSMain
@@ -209,24 +206,32 @@ public:
         psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
         psoDesc.SampleDesc.Count = 1;
 
-        ThrowIfFailed(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineState_)), "CreateGraphicsPipelineState");
+        ThrowIfFailed(device_->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineState_)), "CreateGraphicsPipelineState");
 
         // Command allocator
-        ThrowIfFailed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator_)), "CreateCommandAllocator");
+        ThrowIfFailed(device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator_)), "CreateCommandAllocator");
 
         // Command list
-        ThrowIfFailed(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator_.Get(), pipelineState_.Get(), IID_PPV_ARGS(&commandList_)), "CreateCommandList");
+        ThrowIfFailed(device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator_.Get(), pipelineState_.Get(), IID_PPV_ARGS(&commandList_)), "CreateCommandList");
 
         // Create the vertex buffer.
 
-        float aspectRatio = (float)GetConfig().width / GetConfig().height;
-        // Define the geometry for a triangle.
+        float aspectRatio = (float)GetConfig().Width / GetConfig().Height;
+        // Define the geometry for a quad.
+        //Vertex quadVertices[] =
+        //{
+        //    { { -0.25f, 0.25f * aspectRatio, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
+        //    { { 0.25f, 0.25f * aspectRatio, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f } },
+        //    { { -0.25f, -0.25f * aspectRatio, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } },
+        //    { { 0.25f, -0.25f * aspectRatio, 0.0f }, { 1.0f, 1.0f, 1.0f, 1.0f } }
+        //};
+
         Vertex quadVertices[] =
         {
-            { { -0.25f, 0.25f * aspectRatio, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
-            { { 0.25f, 0.25f * aspectRatio, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f } },
-            { { -0.25f, -0.25f * aspectRatio, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } },
-            { { 0.25f, -0.25f * aspectRatio, 0.0f }, { 1.0f, 1.0f, 1.0f, 1.0f } }
+            { { -1.0, 1.0, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
+            { { 1.0, 1.0, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f } },
+            { { -1.0, -1.0, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } },
+            { { 1.0, -1.0, 0.0f }, { 1.0f, 1.0f, 1.0f, 1.0f } }
         };
 
         const UINT vertexBufferSize = sizeof(quadVertices);
@@ -236,12 +241,12 @@ public:
         CD3DX12_RESOURCE_DESC vertexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
 
         CD3DX12_HEAP_PROPERTIES defaultProperty(D3D12_HEAP_TYPE_DEFAULT);
-        ThrowIfFailed(device->CreateCommittedResource(&defaultProperty, D3D12_HEAP_FLAG_NONE, &vertexBufferDesc,
+        ThrowIfFailed(device_->CreateCommittedResource(&defaultProperty, D3D12_HEAP_FLAG_NONE, &vertexBufferDesc,
             D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&vertexBuffer_)), "CreateCommittedResource");
 
         ComPtr<ID3D12Resource> vertexBufferUpload;
         CD3DX12_HEAP_PROPERTIES uploadPropety(D3D12_HEAP_TYPE_UPLOAD);
-        ThrowIfFailed(device->CreateCommittedResource(&uploadPropety, D3D12_HEAP_FLAG_NONE, &vertexBufferDesc,
+        ThrowIfFailed(device_->CreateCommittedResource(&uploadPropety, D3D12_HEAP_FLAG_NONE, &vertexBufferDesc,
             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&vertexBufferUpload)), "CreateCommittedResource");
 
         // Copy the triangle data to the vertex buffer in upload heap.
@@ -273,17 +278,15 @@ public:
 
         // Fence
         UINT64 initialFenceValue = 0;
-        ThrowIfFailed(device->CreateFence(initialFenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)), "CreateFence");
+        ThrowIfFailed(device_->CreateFence(initialFenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)), "CreateFence");
         fenceValue_ = initialFenceValue + 1;
         fenceEventHandle_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 
-        ShowInfo();
         FlushCommandQueue();
     }
 
     virtual void OnUpdate() override
     {
-        ShowInfo();
         // Command list allocators can only be reset when the associated command lists have finished execution on the GPU.
         // Apps shoud use fences to determin GPU execution progress, which we will do at the end of this function.
         ThrowIfFailed(commandAllocator_->Reset(), "Reset command allocator");
@@ -305,8 +308,8 @@ public:
         // Set necessary state.
         commandList_->SetGraphicsRootSignature(rootSignature_.Get());
 
-        CD3DX12_VIEWPORT viewport(0.0f, 0.0f, static_cast<float>(GetConfig().width), static_cast<float>(GetConfig().height));
-        CD3DX12_RECT scissorRect(0, 0, GetConfig().width, GetConfig().height);
+        CD3DX12_VIEWPORT viewport(0.0f, 0.0f, static_cast<float>(GetState().ViewportWidth), static_cast<float>(GetState().ViewportHeight));
+        CD3DX12_RECT scissorRect(0, 0, static_cast<LONG>(GetState().ViewportWidth), static_cast<LONG>(GetState().ViewportHeight));
         commandList_->RSSetViewports(1, &viewport);
         commandList_->RSSetScissorRects(1, &scissorRect);
 
@@ -330,13 +333,13 @@ public:
         commandQueue_->ExecuteCommandLists(_countof(commandLists), commandLists);
 
         // Swap buffers
-        if (GetConfig().vsync)
+        if (GetConfig().Vsync)
         {
             ThrowIfFailed(swapChain_->Present(1, 0), "Present");
         }
         else
         {
-            ThrowIfFailed(swapChain_->Present(0, DXGI_PRESENT_ALLOW_TEARING), "Present");
+            ThrowIfFailed(swapChain_->Present(0, GetFeature().Tearing ? DXGI_PRESENT_ALLOW_TEARING : 0), "Present");
         }
 
         FlushCommandQueue();
@@ -350,12 +353,32 @@ public:
     
     virtual void OnResize(int width, int height) override
     {
-        std::cout << "Resize " << width << ", " << height << std::endl;
+        FlushCommandQueue();
+
+        // Release the resources holding references to the swap chain (requirement of IDXGISwapChain::ResizeBuffers)
+        for (UINT index = 0; index < kNumSwapChainBuffers; index++)
+        {
+            swapChainBuffers_[index].Reset();
+        }
+
+        // Resize the swap chain to the desired dimensions.
+        DXGI_SWAP_CHAIN_DESC swapChainDesc = {};
+        swapChain_->GetDesc(&swapChainDesc);
+        swapChain_->ResizeBuffers(kNumSwapChainBuffers, static_cast<UINT>(width), static_cast<UINT>(height), swapChainDesc.BufferDesc.Format, swapChainDesc.Flags);
+
+        CreateRTV();
     }
 
-    void ShowInfo()
+    void CreateRTV()
     {
-        
+        // Create RTV for each back buffer.
+        CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(rtvHeap_->GetCPUDescriptorHandleForHeapStart());
+        for (UINT index = 0; index < kNumSwapChainBuffers; index++)
+        {
+            ThrowIfFailed(swapChain_->GetBuffer(index, IID_PPV_ARGS(&swapChainBuffers_[index])), "GetBuffer");
+            device_->CreateRenderTargetView(swapChainBuffers_[index].Get(), nullptr, rtvHandle);
+            rtvHandle.Offset(1, rtvDescriptorSize_);
+        }
     }
 
     void FlushCommandQueue()
@@ -380,8 +403,10 @@ public:
 CREATE_SKETCH(Fullscreen,
     [](sketch::SketchBase::Config& config)
     {
-        config.width = 800;
-        config.height = 450;
-        config.vsync = false;
+        config.Width = 800;
+        config.Height = 450;
+        config.Vsync = false;
+        config.WindowModeSwitch = true;
+        //config.Fullscreen = true;
     }
 )

@@ -13,9 +13,11 @@ namespace launcher
 {
 
 void Run(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& sketchName,
-    std::function<void(sketch::SketchBase::Config&)> configurator = std::function<void(sketch::SketchBase::Config&)>());
+    std::function<void(sketch::SketchBase::Config&)> configSetter = std::function<void(sketch::SketchBase::Config&)>());
 
 HWND GetMainWindow();
+
+void ToggleFullscreen();
 
 }; // namespace launcher
 

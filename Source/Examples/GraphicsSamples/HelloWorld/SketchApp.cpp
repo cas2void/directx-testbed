@@ -213,8 +213,8 @@ public:
 
         // Swap chain
         DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
-        swapChainDesc.Width = GetConfig().width;
-        swapChainDesc.Height = GetConfig().height;
+        swapChainDesc.Width = GetConfig().Width;
+        swapChainDesc.Height = GetConfig().Height;
         swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         swapChainDesc.SampleDesc.Count = 1;
         swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
@@ -224,7 +224,7 @@ public:
         // https://docs.microsoft.com/en-us/windows/win32/direct3ddxgi/variable-refresh-rate-displays
         BOOL allowTearing = FALSE;
         ThrowIfFailed(dxgiFactory6->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing)));
-        swapChainDesc.Flags = GetConfig().vsync ? 0 : DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+        swapChainDesc.Flags = GetConfig().Vsync ? 0 : DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
 
         ComPtr<IDXGISwapChain1> swapChain;
         ThrowIfFailed(dxgiFactory6->CreateSwapChainForHwnd(commandQueue_.Get(), launcher::GetMainWindow(), &swapChainDesc, nullptr, nullptr, swapChain.GetAddressOf()));
@@ -301,7 +301,7 @@ public:
         commandQueue_->ExecuteCommandLists(_countof(commandLists), commandLists);
 
         // Swap buffers
-        if (GetConfig().vsync)
+        if (GetConfig().Vsync)
         {
             ThrowIfFailed(swapChain_->Present(1, 0));
         }
@@ -338,7 +338,7 @@ public:
 CREATE_SKETCH(HelloWorld,
     [](sketch::SketchBase::Config& config)
     {
-        config.width = 800;
-        config.height = 450;
+        config.Width = 800;
+        config.Height = 450;
     }
 )
