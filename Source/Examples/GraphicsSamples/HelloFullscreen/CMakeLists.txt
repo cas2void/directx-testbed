@@ -1,4 +1,4 @@
-set(TARGET_NAME Fullscreen)
+set(TARGET_NAME HelloFullscreen)
 
 add_executable(${TARGET_NAME})
 target_sources(${TARGET_NAME} PRIVATE SketchApp.cpp)

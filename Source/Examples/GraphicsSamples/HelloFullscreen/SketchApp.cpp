@@ -51,7 +51,7 @@ inline void ThrowIfFailed(HRESULT hr, const std::string& context = "")
     }
 }
 
-class Fullscreen : public sketch::SketchBase
+class HelloFullscreen : public sketch::SketchBase
 {
     static const UINT kNumSwapChainBuffers = 2;
 
@@ -399,7 +399,7 @@ public:
     }
 };
 
-CREATE_SKETCH(Fullscreen,
+CREATE_SKETCH(HelloFullscreen,
     [](sketch::SketchBase::Config& config)
     {
         config.Width = 800;
