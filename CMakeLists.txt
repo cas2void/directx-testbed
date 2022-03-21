@@ -95,3 +95,4 @@ add_app_in_subdirectory(Source/Examples/GraphicsSamples/HelloQuad Examples/Graph
 add_app_in_subdirectory(Source/Examples/GraphicsSamples/HelloFrameBuffering Examples/GraphicsSamples)
 add_app_in_subdirectory(Source/Examples/GraphicsSamples/HelloSync Examples/GraphicsSamples)
 add_app_in_subdirectory(Source/Examples/GraphicsSamples/HelloFullscreen Examples/GraphicsSamples)
+add_app_in_subdirectory(Source/Examples/GraphicsSamples/DemoBlob Examples/GraphicsSamples)
