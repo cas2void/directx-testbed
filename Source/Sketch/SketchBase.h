@@ -6,6 +6,12 @@
 namespace sketch
 {
 
+enum class MouseButtonType
+{
+    kLeft,
+    kRight
+};
+
 class SketchBase
 {
 public:
@@ -13,6 +19,10 @@ public:
     virtual void OnUpdate() {}
     virtual void OnQuit() {}
     virtual void OnResize(int width, int height) { (void)width; (void)height; }
+    virtual void OnMouseDown(int x, int y, MouseButtonType buttonType) { (void)x; (void)y; (void)buttonType; }
+    virtual void OnMouseUp(int x, int y, MouseButtonType buttonType) { (void)x; (void)y; (void)buttonType; }
+    virtual void OnMouseDrag(int x, int y, MouseButtonType buttonType) { (void)x; (void)y; (void)buttonType; }
+    virtual void OnMouseMove(int x, int y) { (void)x; (void)y; }
 
     //
     // Config
@@ -102,6 +112,11 @@ public:
     void Update();
     void Quit();
     void Resize(int width, int height);
+
+    void MouseDown(int x, int y, MouseButtonType buttonType);
+    void MouseUp(int x, int y, MouseButtonType buttonType);
+    void MouseDrag(int x, int y, MouseButtonType buttonType);
+    void MouseMove(int x, int y);
 
     void Reset();
     void Tick();

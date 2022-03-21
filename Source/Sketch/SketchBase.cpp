@@ -108,6 +108,34 @@ void SketchBase::Resize(int width, int height)
     }
 }
 
+void SketchBase::MouseDown(int x, int y, MouseButtonType buttonType)
+{
+    OnMouseDown(x, y, buttonType);
+}
+
+void SketchBase::MouseUp(int x, int y, MouseButtonType buttonType)
+{
+    OnMouseUp(x, y, buttonType);
+}
+
+void SketchBase::MouseDrag(int x, int y, MouseButtonType buttonType)
+{
+    OnMouseDrag(x, y, buttonType);
+}
+
+void SketchBase::MouseMove(int x, int y)
+{
+    // Prevent noise
+    static int previousX = -1;
+    static int previousY = -1;
+    if (x != previousX || y != previousY)
+    {
+        OnMouseMove(x, y);
+        previousX = x;
+        previousY = y;
+    }
+}
+
 void SketchBase::Reset()
 {
     startTime_ = std::chrono::high_resolution_clock::now();

@@ -1,6 +1,7 @@
 #include "Launcher.h"
 
 #include <stdexcept>
+#include <windowsx.h>
 
 #include "SketchBase.h"
 
@@ -73,6 +74,41 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 	}
 		break;
 
+	case WM_LBUTTONDOWN:
+		SSketchInstance->MouseDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), sketch::MouseButtonType::kLeft);
+		break;
+
+	case WM_LBUTTONUP:
+		SSketchInstance->MouseUp(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), sketch::MouseButtonType::kLeft);
+		break;
+
+	case WM_RBUTTONDOWN:
+		SSketchInstance->MouseDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), sketch::MouseButtonType::kRight);
+		break;
+
+	case WM_RBUTTONUP:
+		SSketchInstance->MouseUp(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), sketch::MouseButtonType::kRight);
+		break;
+
+	case WM_MOUSEMOVE:
+	{
+		int x = GET_X_LPARAM(lParam);
+		int y = GET_Y_LPARAM(lParam);
+		if ((DWORD)wParam & MK_LBUTTON)
+		{
+			SSketchInstance->MouseDrag(x, y, sketch::MouseButtonType::kLeft);
+		}
+		else if ((DWORD)wParam & MK_RBUTTON)
+		{
+			SSketchInstance->MouseDrag(x, y, sketch::MouseButtonType::kRight);
+		}
+		else
+		{
+			SSketchInstance->MouseMove(x, y);
+		}
+	}
+	break;
+
 	case WM_DESTROY:
 		PostQuitMessage(0);
 		break;
@@ -101,13 +137,13 @@ static RECT GetFullscreenRect()
 	return fullscreenWindowRect;
 }
 
-static void RunInternal(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& sketchName, std::function<void(sketch::SketchBase::Config&)> configurator)
+static void RunInternal(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& sketchName, std::function<void(sketch::SketchBase::Config&)> configSetter)
 {
 	SSketchInstance = sketchInstance;
 
-	if (configurator)
+	if (configSetter)
 	{
-		sketchInstance->SetConfig(configurator);
+		sketchInstance->SetConfig(configSetter);
 	}
 
 	HINSTANCE hInstance = GetModuleHandleW(nullptr);

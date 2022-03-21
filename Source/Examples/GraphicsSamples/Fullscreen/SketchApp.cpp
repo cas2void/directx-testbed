@@ -216,7 +216,6 @@ public:
 
         // Create the vertex buffer.
 
-        float aspectRatio = (float)GetConfig().Width / GetConfig().Height;
         // Define the geometry for a quad.
         //Vertex quadVertices[] =
         //{
