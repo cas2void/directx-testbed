@@ -6,7 +6,7 @@
 #include "SketchBase.h"
 
 static HWND SMainWindow = nullptr;
-static std::shared_ptr<sketch::SketchBase> SSketchInstance;
+static sketch::SketchBase* SSketchInstance = nullptr;
 
 namespace launcher
 {
@@ -137,7 +137,7 @@ static RECT GetFullscreenRect()
 	return fullscreenWindowRect;
 }
 
-static void RunInternal(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& sketchName, std::function<void(sketch::SketchBase::Config&)> configSetter)
+static void RunInternal(sketch::SketchBase* sketchInstance, const std::string& sketchName, std::function<void(sketch::SketchBase::Config&)> configSetter)
 {
 	SSketchInstance = sketchInstance;
 
@@ -219,7 +219,7 @@ void Run(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& 
 {
 	try
 	{
-		RunInternal(sketchInstance, sketchName, configSetter);
+		RunInternal(sketchInstance.get(), sketchName, configSetter);
 	}
 	catch (const std::runtime_error& e)
 	{

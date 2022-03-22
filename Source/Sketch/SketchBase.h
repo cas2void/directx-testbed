@@ -15,6 +15,8 @@ enum class MouseButtonType
 class SketchBase
 {
 public:
+    virtual ~SketchBase() {}
+
     virtual void OnInit() {}
     virtual void OnUpdate() {}
     virtual void OnQuit() {}
