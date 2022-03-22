@@ -142,6 +142,14 @@ public:
         ThrowIfFailed(dxgiFactory6->CreateSwapChainForHwnd(commandQueue_.Get(), launcher::GetMainWindow(), &swapChainDesc, nullptr, nullptr, swapChain.GetAddressOf()));
         ThrowIfFailed(swapChain->QueryInterface(IID_PPV_ARGS(&swapChain_)));
 
+        // Disable Alt+Enter fullscreen transitions offered by IDXGIFactory
+        //
+        // https://docs.microsoft.com/en-us/windows/win32/api/dxgi/nf-dxgi-idxgifactory-makewindowassociation?redirectedfrom=MSDN#remarks
+        // Applications that want to handle mode changes or Alt+Enter themselves should call 
+        // MakeWindowAssociation with the DXGI_MWA_NO_WINDOW_CHANGES flag **AFTER** swap chain creation.
+        // Ensures that DXGI will not interfere with application's handling of window mode changes or Alt+Enter.
+        ThrowIfFailed(dxgiFactory6->MakeWindowAssociation(launcher::GetMainWindow(), DXGI_MWA_NO_ALT_ENTER));
+
         // Descriptor heaps
         // 
         // Describe and create a render target view (RTV) descriptor heap
