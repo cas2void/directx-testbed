@@ -2,6 +2,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <chrono>
+#include <algorithm>
 
 #include <wrl/client.h>
 #include <dxgi1_6.h>
@@ -59,12 +60,22 @@ class DemoBlob : public sketch::SketchBase
     {
         DirectX::XMFLOAT3 position;
         DirectX::XMFLOAT4 color;
+        DirectX::XMFLOAT2 uv;
     };
+
+    struct SceneConstantBuffer
+    {
+        DirectX::XMFLOAT2 center;
+        float aspect;
+        float padding[61]; // Padding so the constant buffer is 256-byte aligned.
+    };
+    static_assert((sizeof(SceneConstantBuffer) % 256) == 0, "Constant Buffer size must be 256-byte aligned");
 
     ComPtr<ID3D12Device> device_;
     ComPtr<ID3D12CommandQueue> commandQueue_;
     ComPtr<IDXGISwapChain3> swapChain_;
     ComPtr<ID3D12DescriptorHeap> rtvHeap_;
+    ComPtr<ID3D12DescriptorHeap> cbvHeap_;
     UINT rtvDescriptorSize_;
     ComPtr<ID3D12Resource> swapChainBuffers_[kNumSwapChainBuffers];
     ComPtr<ID3D12CommandAllocator> commandAllocator_;
@@ -76,6 +87,9 @@ class DemoBlob : public sketch::SketchBase
     ComPtr<ID3D12PipelineState> pipelineState_;
     ComPtr<ID3D12Resource> vertexBuffer_;
     D3D12_VERTEX_BUFFER_VIEW vertexBufferView_;
+    SceneConstantBuffer constantBufferData_;
+    ComPtr<ID3D12Resource> constantBuffer_;
+    UINT8* cbvDataBegin_;
 
 public:
     virtual void OnInit() override
@@ -157,22 +171,35 @@ public:
         // Descriptor size
         rtvDescriptorSize_ = device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
+        // Describe and create a constant buffer view (CBV) descriptor heap
+        D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc = {};
+        cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        cbvHeapDesc.NumDescriptors = 1;
+        cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+
+        ThrowIfFailed(device_->CreateDescriptorHeap(&cbvHeapDesc, IID_PPV_ARGS(&cbvHeap_)));
+
         // Create frame resources, such as RTV/DSV, for each back buffer.
         // Delay to OnSize()
         //CreateRTV();
 
-        // Root Signagure, consisting of emptry root parameter.
+        // Root Signagure, consisting of a descriptor table with a single CBV
+        CD3DX12_DESCRIPTOR_RANGE1 ranges[1];
+        ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC);
+
+        CD3DX12_ROOT_PARAMETER1 rootParameters[1];
+        rootParameters[0].InitAsDescriptorTable(_countof(ranges), ranges, D3D12_SHADER_VISIBILITY_PIXEL);
 
         // Allow input layout and deny uneccessary access to certain pipeline stages.
         D3D12_ROOT_SIGNATURE_FLAGS rootSignatureFlags =
             D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_VERTEX_SHADER_ROOT_ACCESS |
             D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
             D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
-            D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS |
-            D3D12_ROOT_SIGNATURE_FLAG_DENY_PIXEL_SHADER_ROOT_ACCESS;
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
 
         CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC rootSignatureDesc;
-        rootSignatureDesc.Init_1_1(0, nullptr, 0, nullptr, rootSignatureFlags);
+        rootSignatureDesc.Init_1_1(_countof(rootParameters), rootParameters, 0, nullptr, rootSignatureFlags);
 
         ComPtr<ID3DBlob> signature;
         ThrowIfFailed(D3D12SerializeVersionedRootSignature(&rootSignatureDesc, signature.GetAddressOf(), nullptr), "D3D12SerializeVersionedRootSignature");
@@ -185,7 +212,8 @@ public:
         D3D12_INPUT_ELEMENT_DESC inputElementDesc[] =
         {
             { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-            { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+            { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+            { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 28, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
         };
         D3D12_INPUT_LAYOUT_DESC inputLayoutDesc{ inputElementDesc, _countof(inputElementDesc) };
 
@@ -219,10 +247,10 @@ public:
         // Define the geometry for a quad.
         Vertex quadVertices[] =
         {
-            { { -1.0, 1.0, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
-            { { 1.0, 1.0, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f } },
-            { { -1.0, -1.0, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } },
-            { { 1.0, -1.0, 0.0f }, { 1.0f, 1.0f, 1.0f, 1.0f } }
+            { { -1.0f, 1.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 1.0f }, {0.0f, 0.0f} },
+            { { 1.0f, 1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f }, {1.0f, 0.0f} },
+            { { -1.0f, -1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f }, {0.0f, 1.0f} },
+            { { 1.0f, -1.0f, 0.0f }, { 1.0f, 1.0f, 0.0f, 1.0f }, {1.0f, 1.0f} }
         };
 
         const UINT vertexBufferSize = sizeof(quadVertices);
@@ -261,6 +289,29 @@ public:
         vertexBufferView_.StrideInBytes = sizeof(Vertex);
         vertexBufferView_.SizeInBytes = vertexBufferSize;
 
+        // Create the constant buffer
+
+        const UINT constantBufferSize = sizeof(SceneConstantBuffer);
+
+        CD3DX12_RESOURCE_DESC constantBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(constantBufferSize);
+        ThrowIfFailed(device_->CreateCommittedResource(&uploadPropety, D3D12_HEAP_FLAG_NONE, &constantBufferDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&constantBuffer_)));
+
+        // Describe and create a constant buffer view (CBV)
+        D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc = {};
+        cbvDesc.BufferLocation = constantBuffer_->GetGPUVirtualAddress();
+        cbvDesc.SizeInBytes = constantBufferSize;
+
+        CD3DX12_CPU_DESCRIPTOR_HANDLE cbvHandle(cbvHeap_->GetCPUDescriptorHandleForHeapStart());
+        device_->CreateConstantBufferView(&cbvDesc, cbvHandle);
+
+        // Map and initialize the constant buffer. We don't unmap this until the
+        // app closes. Keeping things mapped for the lifetime of the resource is okay.
+        ThrowIfFailed(constantBuffer_->Map(0, &readRange, reinterpret_cast<void**>(&cbvDataBegin_)));
+        constantBufferData_.center = DirectX::XMFLOAT2(0.5f, 0.5f);
+        constantBufferData_.aspect = 1.0f;
+        memcpy(cbvDataBegin_, &constantBufferData_, constantBufferSize);
+
         // Command lists are created in the recording state.
         // Close the resource creation command list and execute it to begin the vertex buffer copy into the default heap.
         ThrowIfFailed(commandList_->Close(), "Close command list");
@@ -298,6 +349,10 @@ public:
 
         // Set necessary state.
         commandList_->SetGraphicsRootSignature(rootSignature_.Get());
+        // 绑定数据
+        ID3D12DescriptorHeap* descriptorHeaps[] = { cbvHeap_.Get() };
+        commandList_->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+        commandList_->SetGraphicsRootDescriptorTable(0, cbvHeap_->GetGPUDescriptorHandleForHeapStart());
 
         CD3DX12_VIEWPORT viewport(0.0f, 0.0f, static_cast<float>(GetState().ViewportWidth), static_cast<float>(GetState().ViewportHeight));
         CD3DX12_RECT scissorRect(0, 0, static_cast<LONG>(GetState().ViewportWidth), static_cast<LONG>(GetState().ViewportHeight));
@@ -339,6 +394,7 @@ public:
     virtual void OnQuit() override
     {
         FlushCommandQueue();
+        constantBuffer_->Unmap(0, nullptr);
         CloseHandle(fenceEventHandle_);
     }
     
@@ -358,13 +414,19 @@ public:
         swapChain_->ResizeBuffers(kNumSwapChainBuffers, static_cast<UINT>(width), static_cast<UINT>(height), swapChainDesc.BufferDesc.Format, swapChainDesc.Flags);
 
         CreateRTV();
+
+        constantBufferData_.aspect = static_cast<float>(width) / static_cast<float>(height);
+        memcpy(cbvDataBegin_, &constantBufferData_, sizeof(constantBufferData_));
     }
 
     virtual void OnMouseDrag(int x, int y, sketch::MouseButtonType buttonType) override
     {
         (void)buttonType;
 
-        std::cout << x << ", " << y << std::endl;
+        float xNormalized = static_cast<float>(x) / static_cast<float>(GetState().ViewportWidth);
+        float yNormalized = static_cast<float>(y) / static_cast<float>(GetState().ViewportHeight);
+        constantBufferData_.center = DirectX::XMFLOAT2(xNormalized, yNormalized);
+        memcpy(cbvDataBegin_, &constantBufferData_, sizeof(constantBufferData_));
     }
 
     void CreateRTV()
@@ -403,6 +465,6 @@ CREATE_SKETCH(DemoBlob,
     {
         config.Width = 800;
         config.Height = 450;
-        config.Vsync = false;
+        //config.Vsync = false;
     }
 )
