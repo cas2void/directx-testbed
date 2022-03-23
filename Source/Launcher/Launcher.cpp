@@ -149,8 +149,6 @@ static RECT GetFullscreenRect()
 
 static void RunInternal(sketch::SketchBase* sketchInstance, const std::string& sketchName, std::function<void(sketch::SketchBase::Config&)> configSetter)
 {
-    SSketchInstance = sketchInstance;
-
     if (configSetter)
     {
         sketchInstance->SetConfig(configSetter);
@@ -225,11 +223,12 @@ static void RunInternal(sketch::SketchBase* sketchInstance, const std::string& s
     sketchInstance->Quit();
 }
 
-void Run(std::shared_ptr<sketch::SketchBase> sketchInstance, const std::string& sketchName, std::function<void(sketch::SketchBase::Config&)> configSetter)
+void Run(sketch::SketchBase* sketchInstance, const std::string& sketchName, std::function<void(sketch::SketchBase::Config&)> configSetter)
 {
     try
     {
-        RunInternal(sketchInstance.get(), sketchName, configSetter);
+        SSketchInstance = sketchInstance;
+        RunInternal(sketchInstance, sketchName, configSetter);
     }
     catch (const std::runtime_error& e)
     {
