@@ -75,8 +75,9 @@ class DemoBlob : public sketch::SketchBase
     ComPtr<ID3D12CommandQueue> commandQueue_;
     ComPtr<IDXGISwapChain3> swapChain_;
     ComPtr<ID3D12DescriptorHeap> rtvHeap_;
-    ComPtr<ID3D12DescriptorHeap> cbvHeap_;
+    ComPtr<ID3D12DescriptorHeap> cbvSrvHeap_;
     UINT rtvDescriptorSize_;
+    UINT cbvSrvDescriptorSize_;
     ComPtr<ID3D12Resource> swapChainBuffers_[kNumSwapChainBuffers];
     ComPtr<ID3D12CommandAllocator> commandAllocator_;
     ComPtr<ID3D12GraphicsCommandList> commandList_;
@@ -91,248 +92,13 @@ class DemoBlob : public sketch::SketchBase
     ComPtr<ID3D12Resource> constantBuffer_;
     UINT8* cbvDataBegin_;
 
+    UINT fieldWidth_ = 480;
+    UINT fieldHeight_ = 270;
+
 public:
     virtual void OnInit() override
     {
-        UINT dxgiFactoryFlag = 0;
-
-#ifndef NDEBUG
-        // Enable the debug layer (requires the Graphics Tools "optional feature").
-        // NOTE: Enabling the debug layer after device_ creation will invalidate the active device_.
-        // When the debug layer is enabled, D3D will send debug messages to the Visual Studio output window like the following :
-        // D3D12 ERROR : ID3D12CommandList::Reset : Reset fails because the command list was not closed.
-        {
-            ComPtr<ID3D12Debug> debugController;
-            if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
-            {
-                debugController->EnableDebugLayer();
-
-                // Enable additional debug layers
-                dxgiFactoryFlag |= DXGI_CREATE_FACTORY_DEBUG;
-            }
-        }
-#endif // !NDEBUG
-
-        // Factory
-        ComPtr<IDXGIFactory6> dxgiFactory6;
-        ThrowIfFailed(CreateDXGIFactory2(dxgiFactoryFlag, IID_PPV_ARGS(&dxgiFactory6)), "CreateDXGIFactory2");
-
-        // Adapter
-        ComPtr<IDXGIAdapter> adapter;
-        ThrowIfFailed(dxgiFactory6->EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter)), "EnumAdapterByGpuPreference");
-
-        // Device
-        ThrowIfFailed(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device_)), "D3D12CreateDevice");
-
-        // MSAA support
-        D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS qualityLevels = {};
-        qualityLevels.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        qualityLevels.SampleCount = 4;
-        qualityLevels.NumQualityLevels = 0;
-        ThrowIfFailed(device_->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &qualityLevels, sizeof(qualityLevels)), "CheckFeatureSupport");
-
-        // Command queue
-        D3D12_COMMAND_QUEUE_DESC queueDesc = {};
-        queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-
-        ThrowIfFailed(device_->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&commandQueue_)), "CreateCommandQueue");
-
-        // Swap chain
-        DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
-        swapChainDesc.Width = GetConfig().Width;
-        swapChainDesc.Height = GetConfig().Height;
-        swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        swapChainDesc.SampleDesc.Count = 1;
-        swapChainDesc.Scaling = DXGI_SCALING_NONE;
-        swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-        swapChainDesc.BufferCount = kNumSwapChainBuffers;
-        swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-        // Support Vsync off
-        // https://docs.microsoft.com/en-us/windows/win32/direct3ddxgi/variable-refresh-rate-displays
-        BOOL allowTearing = FALSE;
-        ThrowIfFailed(dxgiFactory6->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing)), "CheckFeatureSupport");
-        swapChainDesc.Flags = allowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
-
-        SetFeature([allowTearing](Feature& feature){ feature.Tearing = allowTearing; });
-
-        ComPtr<IDXGISwapChain1> swapChain;
-        ThrowIfFailed(dxgiFactory6->CreateSwapChainForHwnd(commandQueue_.Get(), launcher::GetMainWindow(), &swapChainDesc, nullptr, nullptr, swapChain.GetAddressOf()), "CreateSwapChainForHwnd");
-        ThrowIfFailed(swapChain->QueryInterface(IID_PPV_ARGS(&swapChain_)), "QueryInterface");
-
-        // Disable Alt+Enter fullscreen transitions offered by IDXGIFactory
-        //
-        // https://docs.microsoft.com/en-us/windows/win32/api/dxgi/nf-dxgi-idxgifactory-makewindowassociation?redirectedfrom=MSDN#remarks
-        // Applications that want to handle mode changes or Alt+Enter themselves should call 
-        // MakeWindowAssociation with the DXGI_MWA_NO_WINDOW_CHANGES flag **AFTER** swap chain creation.
-        // Ensures that DXGI will not interfere with application's handling of window mode changes or Alt+Enter.
-        ThrowIfFailed(dxgiFactory6->MakeWindowAssociation(launcher::GetMainWindow(), DXGI_MWA_NO_ALT_ENTER));
-
-        // Descriptor heaps
-        // 
-        // Describe and create a render target view (RTV) descriptor heap
-        D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
-        rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-        rtvHeapDesc.NumDescriptors = kNumSwapChainBuffers;
-
-        ThrowIfFailed(device_->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rtvHeap_)), "CreateDescriptorHeap");
-
-        // Descriptor size
-        rtvDescriptorSize_ = device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-
-        // Describe and create a constant buffer view (CBV) descriptor heap
-        D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc = {};
-        cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-        cbvHeapDesc.NumDescriptors = 1;
-        cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-
-        ThrowIfFailed(device_->CreateDescriptorHeap(&cbvHeapDesc, IID_PPV_ARGS(&cbvHeap_)));
-
-        // Create frame resources, such as RTV/DSV, for each back buffer.
-        // Delay to OnSize()
-        //CreateRTV();
-
-        // Root Signagure, consisting of a descriptor table with a single CBV
-        CD3DX12_DESCRIPTOR_RANGE1 ranges[1];
-        ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC);
-
-        CD3DX12_ROOT_PARAMETER1 rootParameters[1];
-        rootParameters[0].InitAsDescriptorTable(_countof(ranges), ranges, D3D12_SHADER_VISIBILITY_PIXEL);
-
-        // Allow input layout and deny uneccessary access to certain pipeline stages.
-        D3D12_ROOT_SIGNATURE_FLAGS rootSignatureFlags =
-            D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
-            D3D12_ROOT_SIGNATURE_FLAG_DENY_VERTEX_SHADER_ROOT_ACCESS |
-            D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
-            D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
-            D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
-
-        CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC rootSignatureDesc;
-        rootSignatureDesc.Init_1_1(_countof(rootParameters), rootParameters, 0, nullptr, rootSignatureFlags);
-
-        ComPtr<ID3DBlob> signature;
-        ThrowIfFailed(D3D12SerializeVersionedRootSignature(&rootSignatureDesc, signature.GetAddressOf(), nullptr), "D3D12SerializeVersionedRootSignature");
-        ThrowIfFailed(device_->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&rootSignature_)), "CreateRootSignature");
-
-        // Compile and load shaders
-        // Already compiled as g_VSMain, g_PSMain
-
-        // Define the vertex input layout.
-        D3D12_INPUT_ELEMENT_DESC inputElementDesc[] =
-        {
-            { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-            { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-            { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 28, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
-        };
-        D3D12_INPUT_LAYOUT_DESC inputLayoutDesc{ inputElementDesc, _countof(inputElementDesc) };
-
-        // Pipeline state object
-        // Describe and create the graphics pipeline state object (PSO).
-        D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
-        psoDesc.InputLayout = inputLayoutDesc;
-        psoDesc.pRootSignature = rootSignature_.Get();
-        psoDesc.VS = CD3DX12_SHADER_BYTECODE(g_VSMain, sizeof(g_VSMain));
-        psoDesc.PS = CD3DX12_SHADER_BYTECODE(g_PSMain, sizeof(g_PSMain));
-        psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-        psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
-        psoDesc.DepthStencilState.DepthEnable = FALSE;
-        psoDesc.DepthStencilState.StencilEnable = FALSE;
-        psoDesc.SampleMask = UINT_MAX;
-        psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-        psoDesc.NumRenderTargets = 1;
-        psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
-        psoDesc.SampleDesc.Count = 1;
-
-        ThrowIfFailed(device_->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineState_)), "CreateGraphicsPipelineState");
-
-        // Command allocator
-        ThrowIfFailed(device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator_)), "CreateCommandAllocator");
-
-        // Command list
-        ThrowIfFailed(device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator_.Get(), pipelineState_.Get(), IID_PPV_ARGS(&commandList_)), "CreateCommandList");
-
-        // Create the vertex buffer.
-
-        // Define the geometry for a quad.
-        Vertex quadVertices[] =
-        {
-            { { -1.0f, 1.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 1.0f }, {0.0f, 0.0f} },
-            { { 1.0f, 1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f }, {1.0f, 0.0f} },
-            { { -1.0f, -1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f }, {0.0f, 1.0f} },
-            { { 1.0f, -1.0f, 0.0f }, { 1.0f, 1.0f, 0.0f, 1.0f }, {1.0f, 1.0f} }
-        };
-
-        const UINT vertexBufferSize = sizeof(quadVertices);
-
-        // Note: using upload heaps to transfer static data like vert buffers is not recommended.
-        // Every time the GPU needs it, the upload heap will be marshalled over. Use default heaps instead.
-        CD3DX12_RESOURCE_DESC vertexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
-
-        CD3DX12_HEAP_PROPERTIES defaultProperty(D3D12_HEAP_TYPE_DEFAULT);
-        ThrowIfFailed(device_->CreateCommittedResource(&defaultProperty, D3D12_HEAP_FLAG_NONE, &vertexBufferDesc,
-            D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&vertexBuffer_)), "CreateCommittedResource");
-
-        ComPtr<ID3D12Resource> vertexBufferUpload;
-        CD3DX12_HEAP_PROPERTIES uploadPropety(D3D12_HEAP_TYPE_UPLOAD);
-        ThrowIfFailed(device_->CreateCommittedResource(&uploadPropety, D3D12_HEAP_FLAG_NONE, &vertexBufferDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&vertexBufferUpload)), "CreateCommittedResource");
-
-        // Copy the triangle data to the vertex buffer in upload heap.
-        UINT8* vertexDataBegin;
-        CD3DX12_RANGE readRange(0, 0);        // We do not intend to read from this resource on the CPU.
-        ThrowIfFailed(vertexBufferUpload->Map(0, &readRange, reinterpret_cast<void**>(&vertexDataBegin)), "Map");
-        memcpy(vertexDataBegin, quadVertices, sizeof(quadVertices));
-        vertexBufferUpload->Unmap(0, nullptr);
-
-        // 将顶点数据由 upload heap 拷贝至 default heap
-        // 这里只是记录指令，实际执行在本函数的末尾。因此，必须保证 upload heap 中分配的资源在指令执行时是有效的。
-        commandList_->CopyBufferRegion(vertexBuffer_.Get(), 0, vertexBufferUpload.Get(), 0, vertexBufferSize);
-
-        // 切换顶点缓冲的状态
-        CD3DX12_RESOURCE_BARRIER toVertexBufferBarrier = CD3DX12_RESOURCE_BARRIER::Transition(vertexBuffer_.Get(),
-            D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
-        commandList_->ResourceBarrier(1, &toVertexBufferBarrier);
-
-        // Initialize the vertex buffer view.
-        vertexBufferView_.BufferLocation = vertexBuffer_->GetGPUVirtualAddress();
-        vertexBufferView_.StrideInBytes = sizeof(Vertex);
-        vertexBufferView_.SizeInBytes = vertexBufferSize;
-
-        // Create the constant buffer
-
-        const UINT constantBufferSize = sizeof(SceneConstantBuffer);
-
-        CD3DX12_RESOURCE_DESC constantBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(constantBufferSize);
-        ThrowIfFailed(device_->CreateCommittedResource(&uploadPropety, D3D12_HEAP_FLAG_NONE, &constantBufferDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&constantBuffer_)));
-
-        // Describe and create a constant buffer view (CBV)
-        D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc = {};
-        cbvDesc.BufferLocation = constantBuffer_->GetGPUVirtualAddress();
-        cbvDesc.SizeInBytes = constantBufferSize;
-
-        CD3DX12_CPU_DESCRIPTOR_HANDLE cbvHandle(cbvHeap_->GetCPUDescriptorHandleForHeapStart());
-        device_->CreateConstantBufferView(&cbvDesc, cbvHandle);
-
-        // Map and initialize the constant buffer. We don't unmap this until the
-        // app closes. Keeping things mapped for the lifetime of the resource is okay.
-        ThrowIfFailed(constantBuffer_->Map(0, &readRange, reinterpret_cast<void**>(&cbvDataBegin_)));
-        constantBufferData_.center = DirectX::XMFLOAT2(0.5f, 0.5f);
-        constantBufferData_.aspect = 1.0f;
-        memcpy(cbvDataBegin_, &constantBufferData_, constantBufferSize);
-
-        // Command lists are created in the recording state.
-        // Close the resource creation command list and execute it to begin the vertex buffer copy into the default heap.
-        ThrowIfFailed(commandList_->Close(), "Close command list");
-        ID3D12CommandList* commandLists[] = { commandList_.Get() };
-        commandQueue_->ExecuteCommandLists(_countof(commandLists), commandLists);
-
-        // Fence
-        UINT64 initialFenceValue = 0;
-        ThrowIfFailed(device_->CreateFence(initialFenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)), "CreateFence");
-        fenceValue_ = initialFenceValue + 1;
-        fenceEventHandle_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-
-        FlushCommandQueue();
+        Temp();
     }
 
     virtual void OnUpdate() override
@@ -358,9 +124,9 @@ public:
         // Set necessary state.
         commandList_->SetGraphicsRootSignature(rootSignature_.Get());
         // 绑定数据
-        ID3D12DescriptorHeap* descriptorHeaps[] = { cbvHeap_.Get() };
+        ID3D12DescriptorHeap* descriptorHeaps[] = { cbvSrvHeap_.Get() };
         commandList_->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
-        commandList_->SetGraphicsRootDescriptorTable(0, cbvHeap_->GetGPUDescriptorHandleForHeapStart());
+        commandList_->SetGraphicsRootDescriptorTable(0, cbvSrvHeap_->GetGPUDescriptorHandleForHeapStart());
 
         CD3DX12_VIEWPORT viewport(0.0f, 0.0f, static_cast<float>(GetState().ViewportWidth), static_cast<float>(GetState().ViewportHeight));
         CD3DX12_RECT scissorRect(0, 0, static_cast<LONG>(GetState().ViewportWidth), static_cast<LONG>(GetState().ViewportHeight));
@@ -421,7 +187,7 @@ public:
         swapChain_->GetDesc(&swapChainDesc);
         swapChain_->ResizeBuffers(kNumSwapChainBuffers, static_cast<UINT>(width), static_cast<UINT>(height), swapChainDesc.BufferDesc.Format, swapChainDesc.Flags);
 
-        CreateRTV();
+        CreateSwapChainRTV();
 
         constantBufferData_.aspect = static_cast<float>(width) / static_cast<float>(height);
         memcpy(cbvDataBegin_, &constantBufferData_, sizeof(constantBufferData_));
@@ -437,7 +203,288 @@ public:
         memcpy(cbvDataBegin_, &constantBufferData_, sizeof(constantBufferData_));
     }
 
-    void CreateRTV()
+    void Temp()
+    {
+        CreateInfrastructure();
+
+        // Descriptor heaps
+        CreateSwapChainDescriptorHeap();
+        CreateConstantBufferDescriptorHeap();
+
+        // Root Signature
+        CreateRootSignature();
+
+        // Pipeline state object
+        CreatePipelineState();
+
+        // Command allocator
+        ThrowIfFailed(device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator_)), "CreateCommandAllocator");
+
+        // Command list
+        ThrowIfFailed(device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator_.Get(), pipelineState_.Get(), IID_PPV_ARGS(&commandList_)), "CreateCommandList");
+
+        // Create the constant buffer
+        CreateConstantBuffer();
+
+        // Create fence
+        CreateFence();
+
+        // Create the vertex buffer.
+        CreateVertexBuffer();
+    }
+
+    void CreateInfrastructure()
+    {
+        UINT dxgiFactoryFlag = 0;
+
+#ifndef NDEBUG
+        // Enable the debug layer (requires the Graphics Tools "optional feature").
+        // NOTE: Enabling the debug layer after device_ creation will invalidate the active device_.
+        // When the debug layer is enabled, D3D will send debug messages to the Visual Studio output window like the following :
+        // D3D12 ERROR : ID3D12CommandList::Reset : Reset fails because the command list was not closed.
+        {
+            ComPtr<ID3D12Debug> debugController;
+            if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
+            {
+                debugController->EnableDebugLayer();
+
+                // Enable additional debug layers
+                dxgiFactoryFlag |= DXGI_CREATE_FACTORY_DEBUG;
+            }
+        }
+#endif // !NDEBUG
+
+        // Factory
+        ComPtr<IDXGIFactory6> dxgiFactory6;
+        ThrowIfFailed(CreateDXGIFactory2(dxgiFactoryFlag, IID_PPV_ARGS(&dxgiFactory6)), "CreateDXGIFactory2");
+
+        // Adapter
+        ComPtr<IDXGIAdapter> adapter;
+        ThrowIfFailed(dxgiFactory6->EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter)), "EnumAdapterByGpuPreference");
+
+        // Device
+        ThrowIfFailed(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device_)), "D3D12CreateDevice");
+
+        // MSAA support
+        D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS qualityLevels = {};
+        qualityLevels.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        qualityLevels.SampleCount = 4;
+        qualityLevels.NumQualityLevels = 0;
+        ThrowIfFailed(device_->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &qualityLevels, sizeof(qualityLevels)), "CheckFeatureSupport");
+
+        // Command queue
+        D3D12_COMMAND_QUEUE_DESC queueDesc = {};
+        queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+
+        ThrowIfFailed(device_->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&commandQueue_)), "CreateCommandQueue");
+
+        // Swap chain
+        DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
+        swapChainDesc.Width = GetConfig().Width;
+        swapChainDesc.Height = GetConfig().Height;
+        swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        swapChainDesc.SampleDesc.Count = 1;
+        swapChainDesc.Scaling = DXGI_SCALING_NONE;
+        swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        swapChainDesc.BufferCount = kNumSwapChainBuffers;
+        swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+        // Support Vsync off
+        // https://docs.microsoft.com/en-us/windows/win32/direct3ddxgi/variable-refresh-rate-displays
+        BOOL allowTearing = FALSE;
+        ThrowIfFailed(dxgiFactory6->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing)), "CheckFeatureSupport");
+        swapChainDesc.Flags = allowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
+
+        SetFeature([allowTearing](Feature& feature) { feature.Tearing = allowTearing; });
+
+        ComPtr<IDXGISwapChain1> swapChain;
+        ThrowIfFailed(dxgiFactory6->CreateSwapChainForHwnd(commandQueue_.Get(), launcher::GetMainWindow(), &swapChainDesc, nullptr, nullptr, swapChain.GetAddressOf()), "CreateSwapChainForHwnd");
+        ThrowIfFailed(swapChain->QueryInterface(IID_PPV_ARGS(&swapChain_)), "QueryInterface");
+
+        // Disable Alt+Enter fullscreen transitions offered by IDXGIFactory
+        //
+        // https://docs.microsoft.com/en-us/windows/win32/api/dxgi/nf-dxgi-idxgifactory-makewindowassociation?redirectedfrom=MSDN#remarks
+        // Applications that want to handle mode changes or Alt+Enter themselves should call 
+        // MakeWindowAssociation with the DXGI_MWA_NO_WINDOW_CHANGES flag **AFTER** swap chain creation.
+        // Ensures that DXGI will not interfere with application's handling of window mode changes or Alt+Enter.
+        ThrowIfFailed(dxgiFactory6->MakeWindowAssociation(launcher::GetMainWindow(), DXGI_MWA_NO_ALT_ENTER));
+    }
+
+    void CreateSwapChainDescriptorHeap()
+    {
+        // Describe and create a render target view (RTV) descriptor heap
+        D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
+        rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+        rtvHeapDesc.NumDescriptors = kNumSwapChainBuffers;
+
+        ThrowIfFailed(device_->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rtvHeap_)), "CreateDescriptorHeap");
+
+        // Descriptor size
+        rtvDescriptorSize_ = device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    }
+
+    void CreateConstantBufferDescriptorHeap()
+    {
+        // Describe and create a constant buffer view (CBV) descriptor heap
+        D3D12_DESCRIPTOR_HEAP_DESC cbvSrvHeapDesc = {};
+        cbvSrvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        cbvSrvHeapDesc.NumDescriptors = 1 + 1;  // One CBV and one SRV
+        cbvSrvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+
+        ThrowIfFailed(device_->CreateDescriptorHeap(&cbvSrvHeapDesc, IID_PPV_ARGS(&cbvSrvHeap_)));
+
+        // Descriptor Size
+        cbvSrvDescriptorSize_ = device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    }
+
+    void CreateRootSignature()
+    {
+        // Root Signagure, consisting of a descriptor table with a single CBV
+        CD3DX12_DESCRIPTOR_RANGE1 ranges[1];
+        ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC);
+
+        CD3DX12_ROOT_PARAMETER1 rootParameters[1];
+        rootParameters[0].InitAsDescriptorTable(_countof(ranges), ranges, D3D12_SHADER_VISIBILITY_PIXEL);
+
+        // Allow input layout and deny uneccessary access to certain pipeline stages.
+        D3D12_ROOT_SIGNATURE_FLAGS rootSignatureFlags =
+            D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_VERTEX_SHADER_ROOT_ACCESS |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
+
+        CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC rootSignatureDesc;
+        rootSignatureDesc.Init_1_1(_countof(rootParameters), rootParameters, 0, nullptr, rootSignatureFlags);
+
+        ComPtr<ID3DBlob> signature;
+        ThrowIfFailed(D3D12SerializeVersionedRootSignature(&rootSignatureDesc, signature.GetAddressOf(), nullptr), "D3D12SerializeVersionedRootSignature");
+        ThrowIfFailed(device_->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&rootSignature_)), "CreateRootSignature");
+    }
+
+    void CreatePipelineState()
+    {
+        // Define the vertex input layout.
+        D3D12_INPUT_ELEMENT_DESC inputElementDesc[] =
+        {
+            { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+            { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+            { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 28, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+        };
+        D3D12_INPUT_LAYOUT_DESC inputLayoutDesc{ inputElementDesc, _countof(inputElementDesc) };
+
+        // Pipeline state object
+        // Describe and create the graphics pipeline state object (PSO).
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+        psoDesc.InputLayout = inputLayoutDesc;
+        psoDesc.pRootSignature = rootSignature_.Get();
+        psoDesc.VS = CD3DX12_SHADER_BYTECODE(g_VSMain, sizeof(g_VSMain));
+        psoDesc.PS = CD3DX12_SHADER_BYTECODE(g_PSMain, sizeof(g_PSMain));
+        psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+        psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+        psoDesc.DepthStencilState.DepthEnable = FALSE;
+        psoDesc.DepthStencilState.StencilEnable = FALSE;
+        psoDesc.SampleMask = UINT_MAX;
+        psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        psoDesc.NumRenderTargets = 1;
+        psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        psoDesc.SampleDesc.Count = 1;
+
+        ThrowIfFailed(device_->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineState_)), "CreateGraphicsPipelineState");
+    }
+
+    void CreateConstantBuffer()
+    {
+        // Create the constant buffer
+        const UINT constantBufferSize = sizeof(SceneConstantBuffer);
+
+        CD3DX12_HEAP_PROPERTIES uploadPropety(D3D12_HEAP_TYPE_UPLOAD);
+        CD3DX12_RESOURCE_DESC constantBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(constantBufferSize);
+        ThrowIfFailed(device_->CreateCommittedResource(&uploadPropety, D3D12_HEAP_FLAG_NONE, &constantBufferDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&constantBuffer_)));
+
+        // Describe and create a constant buffer view (CBV)
+        D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc = {};
+        cbvDesc.BufferLocation = constantBuffer_->GetGPUVirtualAddress();
+        cbvDesc.SizeInBytes = constantBufferSize;
+
+        CD3DX12_CPU_DESCRIPTOR_HANDLE cbvHandle(cbvSrvHeap_->GetCPUDescriptorHandleForHeapStart());
+        device_->CreateConstantBufferView(&cbvDesc, cbvHandle);
+
+        // Map and initialize the constant buffer. We don't unmap this until the
+        // app closes. Keeping things mapped for the lifetime of the resource is okay.
+        CD3DX12_RANGE readRange(0, 0);        // We do not intend to read from this resource on the CPU.
+        ThrowIfFailed(constantBuffer_->Map(0, &readRange, reinterpret_cast<void**>(&cbvDataBegin_)));
+        constantBufferData_.center = DirectX::XMFLOAT2(0.5f, 0.5f);
+        constantBufferData_.aspect = 1.0f;
+        memcpy(cbvDataBegin_, &constantBufferData_, constantBufferSize);
+    }
+
+    void CreateFence()
+    {
+        // Fence
+        UINT64 initialFenceValue = 0;
+        ThrowIfFailed(device_->CreateFence(initialFenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)), "CreateFence");
+        fenceValue_ = initialFenceValue + 1;
+        fenceEventHandle_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    }
+
+    void CreateVertexBuffer()
+    {
+        // Define the geometry for a quad.
+        Vertex quadVertices[] =
+        {
+            { { -1.0f, 1.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 1.0f }, {0.0f, 0.0f} },
+            { { 1.0f, 1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f }, {1.0f, 0.0f} },
+            { { -1.0f, -1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f }, {0.0f, 1.0f} },
+            { { 1.0f, -1.0f, 0.0f }, { 1.0f, 1.0f, 0.0f, 1.0f }, {1.0f, 1.0f} }
+        };
+
+        const UINT vertexBufferSize = sizeof(quadVertices);
+
+        // Note: using upload heaps to transfer static data like vert buffers is not recommended.
+        // Every time the GPU needs it, the upload heap will be marshalled over. Use default heaps instead.
+        CD3DX12_RESOURCE_DESC vertexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
+
+        CD3DX12_HEAP_PROPERTIES defaultProperty(D3D12_HEAP_TYPE_DEFAULT);
+        ThrowIfFailed(device_->CreateCommittedResource(&defaultProperty, D3D12_HEAP_FLAG_NONE, &vertexBufferDesc,
+            D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&vertexBuffer_)), "CreateCommittedResource");
+
+        ComPtr<ID3D12Resource> vertexBufferUpload;
+        CD3DX12_HEAP_PROPERTIES uploadPropety(D3D12_HEAP_TYPE_UPLOAD);
+        ThrowIfFailed(device_->CreateCommittedResource(&uploadPropety, D3D12_HEAP_FLAG_NONE, &vertexBufferDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&vertexBufferUpload)), "CreateCommittedResource");
+
+        // Copy the triangle data to the vertex buffer in upload heap.
+        UINT8* vertexDataBegin;
+        CD3DX12_RANGE readRange(0, 0);        // We do not intend to read from this resource on the CPU.
+        ThrowIfFailed(vertexBufferUpload->Map(0, &readRange, reinterpret_cast<void**>(&vertexDataBegin)), "Map");
+        memcpy(vertexDataBegin, quadVertices, sizeof(quadVertices));
+        vertexBufferUpload->Unmap(0, nullptr);
+
+        // 将顶点数据由 upload heap 拷贝至 default heap
+        // 这里只是记录指令，实际执行在本函数的末尾。因此，必须保证 upload heap 中分配的资源在指令执行时是有效的。
+        commandList_->CopyBufferRegion(vertexBuffer_.Get(), 0, vertexBufferUpload.Get(), 0, vertexBufferSize);
+
+        // 切换顶点缓冲的状态
+        CD3DX12_RESOURCE_BARRIER toVertexBufferBarrier = CD3DX12_RESOURCE_BARRIER::Transition(vertexBuffer_.Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+        commandList_->ResourceBarrier(1, &toVertexBufferBarrier);
+
+        // Initialize the vertex buffer view.
+        vertexBufferView_.BufferLocation = vertexBuffer_->GetGPUVirtualAddress();
+        vertexBufferView_.StrideInBytes = sizeof(Vertex);
+        vertexBufferView_.SizeInBytes = vertexBufferSize;
+
+        // Command lists are created in the recording state.
+        // Close the resource creation command list and execute it to begin the vertex buffer copy into the default heap.
+        ThrowIfFailed(commandList_->Close(), "Close command list");
+        ID3D12CommandList* commandLists[] = { commandList_.Get() };
+        commandQueue_->ExecuteCommandLists(_countof(commandLists), commandLists);
+
+        FlushCommandQueue();
+    }
+
+    void CreateSwapChainRTV()
     {
         // Create RTV for each back buffer.
         CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(rtvHeap_->GetCPUDescriptorHandleForHeapStart());
