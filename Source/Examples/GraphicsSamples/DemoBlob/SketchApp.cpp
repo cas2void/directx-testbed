@@ -98,69 +98,36 @@ class DemoBlob : public sketch::SketchBase
 public:
     virtual void OnInit() override
     {
-        Temp();
+        CreateInfrastructure();
+
+        // Create fence
+        CreateFence();
+
+        // Descriptor heaps
+        CreateSwapChainDescriptorHeap();
+        CreateConstantBufferDescriptorHeap();
+
+        // Root Signature
+        CreateRootSignature();
+
+        // Pipeline state object
+        CreatePipelineState();
+
+        // Create the constant buffer
+        CreateConstantBuffer();
+
+        // Create the vertex buffer.
+        CreateVertexBuffer();
+
+        // Command allocator and list
+        CreateCommandList();
     }
 
     virtual void OnUpdate() override
     {
-        // Command list allocators can only be reset when the associated command lists have finished execution on the GPU.
-        // Apps shoud use fences to determin GPU execution progress, which we will do at the end of this function.
-        ThrowIfFailed(commandAllocator_->Reset(), "Reset command allocator");
+        RenderToBackBuffer();
 
-        // After ExecuteCommandList() has been called on a particular command list,
-        // that command list can then be reset at any time before re-recoding.
-        ThrowIfFailed(commandList_->Reset(commandAllocator_.Get(), pipelineState_.Get()), "Reset command list");
-
-        // Indicate the the back buffer will be used as a render target.
-        const UINT backBufferIndex = swapChain_->GetCurrentBackBufferIndex();
-        CD3DX12_RESOURCE_BARRIER toRenderBarrier = CD3DX12_RESOURCE_BARRIER::Transition(swapChainBuffers_[backBufferIndex].Get(), 
-            D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
-        commandList_->ResourceBarrier(1, &toRenderBarrier);
-
-        CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(rtvHeap_->GetCPUDescriptorHandleForHeapStart(), backBufferIndex, rtvDescriptorSize_);
-
-        commandList_->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
-
-        // Set necessary state.
-        commandList_->SetGraphicsRootSignature(rootSignature_.Get());
-        // 绑定数据
-        ID3D12DescriptorHeap* descriptorHeaps[] = { cbvSrvHeap_.Get() };
-        commandList_->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
-        commandList_->SetGraphicsRootDescriptorTable(0, cbvSrvHeap_->GetGPUDescriptorHandleForHeapStart());
-
-        CD3DX12_VIEWPORT viewport(0.0f, 0.0f, static_cast<float>(GetState().ViewportWidth), static_cast<float>(GetState().ViewportHeight));
-        CD3DX12_RECT scissorRect(0, 0, static_cast<LONG>(GetState().ViewportWidth), static_cast<LONG>(GetState().ViewportHeight));
-        commandList_->RSSetViewports(1, &viewport);
-        commandList_->RSSetScissorRects(1, &scissorRect);
-
-        // Record commands
-        const FLOAT clearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
-        commandList_->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
-        commandList_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-        commandList_->IASetVertexBuffers(0, 1, &vertexBufferView_);
-        commandList_->DrawInstanced(4, 1, 0, 0);
-
-        // Indicate that the back buffer will now be used to present.
-        CD3DX12_RESOURCE_BARRIER toPresentBarrier = CD3DX12_RESOURCE_BARRIER::Transition(swapChainBuffers_[backBufferIndex].Get(), 
-            D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
-        commandList_->ResourceBarrier(1, &toPresentBarrier);
-
-        // Command list is expected to be closed before calling Reset again.
-        ThrowIfFailed(commandList_->Close(), "Clost command list");
-
-        // Execulte the command list
-        ID3D12CommandList* commandLists[] = { commandList_.Get() };
-        commandQueue_->ExecuteCommandLists(_countof(commandLists), commandLists);
-
-        // Swap buffers
-        if (GetConfig().Vsync)
-        {
-            ThrowIfFailed(swapChain_->Present(1, 0), "Present");
-        }
-        else
-        {
-            ThrowIfFailed(swapChain_->Present(0, GetFeature().Tearing ? DXGI_PRESENT_ALLOW_TEARING : 0), "Present");
-        }
+        PresentAndSwapBuffers();
 
         FlushCommandQueue();
     }
@@ -201,36 +168,6 @@ public:
         float yNormalized = static_cast<float>(y) / static_cast<float>(GetState().ViewportHeight);
         constantBufferData_.center = DirectX::XMFLOAT2(xNormalized, yNormalized);
         memcpy(cbvDataBegin_, &constantBufferData_, sizeof(constantBufferData_));
-    }
-
-    void Temp()
-    {
-        CreateInfrastructure();
-
-        // Descriptor heaps
-        CreateSwapChainDescriptorHeap();
-        CreateConstantBufferDescriptorHeap();
-
-        // Root Signature
-        CreateRootSignature();
-
-        // Pipeline state object
-        CreatePipelineState();
-
-        // Command allocator
-        ThrowIfFailed(device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator_)), "CreateCommandAllocator");
-
-        // Command list
-        ThrowIfFailed(device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator_.Get(), pipelineState_.Get(), IID_PPV_ARGS(&commandList_)), "CreateCommandList");
-
-        // Create the constant buffer
-        CreateConstantBuffer();
-
-        // Create fence
-        CreateFence();
-
-        // Create the vertex buffer.
-        CreateVertexBuffer();
     }
 
     void CreateInfrastructure()
@@ -461,14 +398,20 @@ public:
         memcpy(vertexDataBegin, quadVertices, sizeof(quadVertices));
         vertexBufferUpload->Unmap(0, nullptr);
 
+        ComPtr<ID3D12CommandAllocator> copyCommandAllocator;
+        ComPtr<ID3D12GraphicsCommandList> copyCommandList;
+        // Command allocator
+        ThrowIfFailed(device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&copyCommandAllocator)), "CreateCommandAllocator");
+        ThrowIfFailed(device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, copyCommandAllocator.Get(), nullptr, IID_PPV_ARGS(&copyCommandList)), "CreateCommandList");
+
         // 将顶点数据由 upload heap 拷贝至 default heap
         // 这里只是记录指令，实际执行在本函数的末尾。因此，必须保证 upload heap 中分配的资源在指令执行时是有效的。
-        commandList_->CopyBufferRegion(vertexBuffer_.Get(), 0, vertexBufferUpload.Get(), 0, vertexBufferSize);
+        copyCommandList->CopyBufferRegion(vertexBuffer_.Get(), 0, vertexBufferUpload.Get(), 0, vertexBufferSize);
 
         // 切换顶点缓冲的状态
         CD3DX12_RESOURCE_BARRIER toVertexBufferBarrier = CD3DX12_RESOURCE_BARRIER::Transition(vertexBuffer_.Get(),
             D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
-        commandList_->ResourceBarrier(1, &toVertexBufferBarrier);
+        copyCommandList->ResourceBarrier(1, &toVertexBufferBarrier);
 
         // Initialize the vertex buffer view.
         vertexBufferView_.BufferLocation = vertexBuffer_->GetGPUVirtualAddress();
@@ -477,11 +420,86 @@ public:
 
         // Command lists are created in the recording state.
         // Close the resource creation command list and execute it to begin the vertex buffer copy into the default heap.
-        ThrowIfFailed(commandList_->Close(), "Close command list");
-        ID3D12CommandList* commandLists[] = { commandList_.Get() };
+        ThrowIfFailed(copyCommandList->Close(), "Close command list");
+        ID3D12CommandList* commandLists[] = { copyCommandList.Get() };
         commandQueue_->ExecuteCommandLists(_countof(commandLists), commandLists);
 
         FlushCommandQueue();
+    }
+
+    void CreateCommandList()
+    {
+        // Command allocator
+        ThrowIfFailed(device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator_)), "CreateCommandAllocator");
+
+        // Command list
+        ThrowIfFailed(device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator_.Get(), pipelineState_.Get(), IID_PPV_ARGS(&commandList_)), "CreateCommandList");
+        ThrowIfFailed(commandList_->Close(), "Close command list when initializing");
+    }
+
+    void RenderToBackBuffer()
+    {
+        // Command list allocators can only be reset when the associated command lists have finished execution on the GPU.
+        // Apps shoud use fences to determin GPU execution progress, which we will do at the end of this function.
+        ThrowIfFailed(commandAllocator_->Reset(), "Reset command allocator");
+
+        // After ExecuteCommandList() has been called on a particular command list,
+        // that command list can then be reset at any time before re-recoding.
+        ThrowIfFailed(commandList_->Reset(commandAllocator_.Get(), pipelineState_.Get()), "Reset command list");
+
+        // Indicate the the back buffer will be used as a render target.
+        const UINT backBufferIndex = swapChain_->GetCurrentBackBufferIndex();
+        CD3DX12_RESOURCE_BARRIER toRenderBarrier = CD3DX12_RESOURCE_BARRIER::Transition(swapChainBuffers_[backBufferIndex].Get(),
+            D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        commandList_->ResourceBarrier(1, &toRenderBarrier);
+
+        CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(rtvHeap_->GetCPUDescriptorHandleForHeapStart(), backBufferIndex, rtvDescriptorSize_);
+
+        commandList_->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+
+        // Set necessary state.
+        commandList_->SetGraphicsRootSignature(rootSignature_.Get());
+        // 绑定数据
+        ID3D12DescriptorHeap* descriptorHeaps[] = { cbvSrvHeap_.Get() };
+        commandList_->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+        commandList_->SetGraphicsRootDescriptorTable(0, cbvSrvHeap_->GetGPUDescriptorHandleForHeapStart());
+
+        CD3DX12_VIEWPORT viewport(0.0f, 0.0f, static_cast<float>(GetState().ViewportWidth), static_cast<float>(GetState().ViewportHeight));
+        CD3DX12_RECT scissorRect(0, 0, static_cast<LONG>(GetState().ViewportWidth), static_cast<LONG>(GetState().ViewportHeight));
+        commandList_->RSSetViewports(1, &viewport);
+        commandList_->RSSetScissorRects(1, &scissorRect);
+
+        // Record commands
+        const FLOAT clearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
+        commandList_->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+        commandList_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+        commandList_->IASetVertexBuffers(0, 1, &vertexBufferView_);
+        commandList_->DrawInstanced(4, 1, 0, 0);
+
+        // Indicate that the back buffer will now be used to present.
+        CD3DX12_RESOURCE_BARRIER toPresentBarrier = CD3DX12_RESOURCE_BARRIER::Transition(swapChainBuffers_[backBufferIndex].Get(),
+            D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+        commandList_->ResourceBarrier(1, &toPresentBarrier);
+
+        // Command list is expected to be closed before calling Reset again.
+        ThrowIfFailed(commandList_->Close(), "Clost command list");
+
+        // Execulte the command list
+        ID3D12CommandList* commandLists[] = { commandList_.Get() };
+        commandQueue_->ExecuteCommandLists(_countof(commandLists), commandLists);
+    }
+
+    void PresentAndSwapBuffers()
+    {
+        // Present and swap buffers
+        if (GetConfig().Vsync)
+        {
+            ThrowIfFailed(swapChain_->Present(1, 0), "Present");
+        }
+        else
+        {
+            ThrowIfFailed(swapChain_->Present(0, GetFeature().Tearing ? DXGI_PRESENT_ALLOW_TEARING : 0), "Present");
+        }
     }
 
     void CreateSwapChainRTV()
