@@ -58,7 +58,7 @@ class DemoBlob : public sketch::SketchBase
 
     struct Vertex
     {
-        DirectX::XMFLOAT3 position;
+        DirectX::XMFLOAT2 position;
         DirectX::XMFLOAT4 color;
         DirectX::XMFLOAT2 uv;
     };
@@ -94,17 +94,21 @@ class DemoBlob : public sketch::SketchBase
 
     UINT fieldWidth_ = 480;
     UINT fieldHeight_ = 270;
+    ComPtr<ID3D12Resource> vectorFieldBuffers[2];
+    ComPtr<ID3D12RootSignature> vectorFieldRootSignature_;
+    ComPtr<ID3D12PipelineState> vectorFieldPipelineState_;
 
 public:
     virtual void OnInit() override
     {
+        // Device, command queue, swap chain
         CreateInfrastructure();
 
         // Create fence
         CreateFence();
 
         // Descriptor heaps
-        CreateSwapChainDescriptorHeap();
+        CreateRenderTargetDescriptorHeap();
         CreateConstantBufferDescriptorHeap();
 
         // Root Signature
@@ -121,6 +125,10 @@ public:
 
         // Command allocator and list
         CreateCommandList();
+
+        CreateVectorFieldBuffers();
+        CreateVectorFieldRootSignature();
+        CreateVectorFieldPipelineState();
     }
 
     virtual void OnUpdate() override
@@ -246,12 +254,12 @@ public:
         ThrowIfFailed(dxgiFactory6->MakeWindowAssociation(launcher::GetMainWindow(), DXGI_MWA_NO_ALT_ENTER));
     }
 
-    void CreateSwapChainDescriptorHeap()
+    void CreateRenderTargetDescriptorHeap()
     {
         // Describe and create a render target view (RTV) descriptor heap
         D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
         rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-        rtvHeapDesc.NumDescriptors = kNumSwapChainBuffers;
+        rtvHeapDesc.NumDescriptors = kNumSwapChainBuffers + 2;  // + 2 vector field generation buffers
 
         ThrowIfFailed(device_->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rtvHeap_)), "CreateDescriptorHeap");
 
@@ -264,7 +272,7 @@ public:
         // Describe and create a constant buffer view (CBV) descriptor heap
         D3D12_DESCRIPTOR_HEAP_DESC cbvSrvHeapDesc = {};
         cbvSrvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-        cbvSrvHeapDesc.NumDescriptors = 1 + 1;  // One CBV and one SRV
+        cbvSrvHeapDesc.NumDescriptors = 1 + 2;  // One CBV + 2 SRV for vector field
         cbvSrvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
         ThrowIfFailed(device_->CreateDescriptorHeap(&cbvSrvHeapDesc, IID_PPV_ARGS(&cbvSrvHeap_)));
@@ -276,10 +284,8 @@ public:
     void CreateRootSignature()
     {
         // Root Signagure, consisting of a descriptor table with a single CBV
-        CD3DX12_DESCRIPTOR_RANGE1 ranges[1];
-        ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC);
-
-        CD3DX12_ROOT_PARAMETER1 rootParameters[1];
+        CD3DX12_DESCRIPTOR_RANGE1 ranges[] = { CD3DX12_DESCRIPTOR_RANGE1(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC) };
+        CD3DX12_ROOT_PARAMETER1 rootParameters[] = { CD3DX12_ROOT_PARAMETER1() };
         rootParameters[0].InitAsDescriptorTable(_countof(ranges), ranges, D3D12_SHADER_VISIBILITY_PIXEL);
 
         // Allow input layout and deny uneccessary access to certain pipeline stages.
@@ -303,9 +309,9 @@ public:
         // Define the vertex input layout.
         D3D12_INPUT_ELEMENT_DESC inputElementDesc[] =
         {
-            { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-            { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-            { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 28, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+            { "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+            { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 8, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+            { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
         };
         D3D12_INPUT_LAYOUT_DESC inputLayoutDesc{ inputElementDesc, _countof(inputElementDesc) };
 
@@ -314,8 +320,8 @@ public:
         D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
         psoDesc.InputLayout = inputLayoutDesc;
         psoDesc.pRootSignature = rootSignature_.Get();
-        psoDesc.VS = CD3DX12_SHADER_BYTECODE(g_VSMain, sizeof(g_VSMain));
-        psoDesc.PS = CD3DX12_SHADER_BYTECODE(g_PSMain, sizeof(g_PSMain));
+        psoDesc.VS = CD3DX12_SHADER_BYTECODE(g_Shaders_VSMain, sizeof(g_Shaders_VSMain));
+        psoDesc.PS = CD3DX12_SHADER_BYTECODE(g_Shaders_PSMain, sizeof(g_Shaders_PSMain));
         psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
         psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
         psoDesc.DepthStencilState.DepthEnable = FALSE;
@@ -370,10 +376,10 @@ public:
         // Define the geometry for a quad.
         Vertex quadVertices[] =
         {
-            { { -1.0f, 1.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 1.0f }, {0.0f, 0.0f} },
-            { { 1.0f, 1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f }, {1.0f, 0.0f} },
-            { { -1.0f, -1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f }, {0.0f, 1.0f} },
-            { { 1.0f, -1.0f, 0.0f }, { 1.0f, 1.0f, 0.0f, 1.0f }, {1.0f, 1.0f} }
+            { { -1.0f, 1.0f }, { 0.0f, 0.0f, 0.0f, 1.0f }, {0.0f, 0.0f} },
+            { { 1.0f, 1.0f }, { 1.0f, 0.0f, 0.0f, 1.0f }, {1.0f, 0.0f} },
+            { { -1.0f, -1.0f }, { 0.0f, 1.0f, 0.0f, 1.0f }, {0.0f, 1.0f} },
+            { { 1.0f, -1.0f }, { 1.0f, 1.0f, 0.0f, 1.0f }, {1.0f, 1.0f} }
         };
 
         const UINT vertexBufferSize = sizeof(quadVertices);
@@ -504,14 +510,82 @@ public:
 
     void CreateSwapChainRTV()
     {
-        // Create RTV for each back buffer.
+        // Create RTV for each back buffer, RTV for back buffers are stored at the start of render target descriptor heap.
         CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(rtvHeap_->GetCPUDescriptorHandleForHeapStart());
         for (UINT index = 0; index < kNumSwapChainBuffers; index++)
         {
+            // Save pointers to back buffers in swapChainBuffers.
             ThrowIfFailed(swapChain_->GetBuffer(index, IID_PPV_ARGS(&swapChainBuffers_[index])), "GetBuffer");
+
             device_->CreateRenderTargetView(swapChainBuffers_[index].Get(), nullptr, rtvHandle);
             rtvHandle.Offset(1, rtvDescriptorSize_);
         }
+    }
+
+    void CreateVectorFieldBuffers()
+    {
+        CD3DX12_HEAP_PROPERTIES defaultProperty(D3D12_HEAP_TYPE_DEFAULT);
+        CD3DX12_RESOURCE_DESC renderTargetDesc = CD3DX12_RESOURCE_DESC::Tex2D(
+            DXGI_FORMAT_R8G8B8A8_UNORM,
+            fieldWidth_, fieldHeight_,
+            1, 1, 1, 0,
+            D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+        CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(rtvHeap_->GetCPUDescriptorHandleForHeapStart(), kNumSwapChainBuffers, rtvDescriptorSize_);
+        CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle(cbvSrvHeap_->GetCPUDescriptorHandleForHeapStart(), 1, cbvSrvDescriptorSize_);
+        for (int i = 0; i < 2; i++)
+        {
+            ThrowIfFailed(device_->CreateCommittedResource(&defaultProperty, D3D12_HEAP_FLAG_NONE, &renderTargetDesc,
+                D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr, IID_PPV_ARGS(&vectorFieldBuffers[i])), "Create vector field buffer");
+
+            // null pDesc argument will inherit the resource format and dimension (if not typeless) and RTVs target the first mip and all array slices.
+            device_->CreateRenderTargetView(vectorFieldBuffers[i].Get(), nullptr, rtvHandle);
+            rtvHandle.Offset(1, rtvDescriptorSize_);
+
+            // null pDesc argument will inherit the resource format and dimension (if not typeless) and for buffers SRVs target a full buffer and are typed (not raw or structured), 
+            // and for textures SRVs target a full texture, all mips and all array slices.
+            device_->CreateShaderResourceView(vectorFieldBuffers[i].Get(), nullptr, srvHandle);
+            srvHandle.Offset(1, cbvSrvDescriptorSize_);
+        }
+    }
+
+    void CreateVectorFieldRootSignature()
+    {
+        CD3DX12_DESCRIPTOR_RANGE1 ranges[] = { CD3DX12_DESCRIPTOR_RANGE1(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0) };
+        CD3DX12_ROOT_PARAMETER1 rootParameters[] = { CD3DX12_ROOT_PARAMETER1() };
+        rootParameters[0].InitAsDescriptorTable(_countof(ranges), ranges, D3D12_SHADER_VISIBILITY_PIXEL);
+
+        D3D12_ROOT_SIGNATURE_FLAGS rootSignatureFlags = 
+            D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_VERTEX_SHADER_ROOT_ACCESS |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
+
+        // Create a sampler
+        D3D12_STATIC_SAMPLER_DESC samplerDesc = {};
+        samplerDesc.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        samplerDesc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        samplerDesc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        samplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        samplerDesc.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+        samplerDesc.MaxLOD = D3D12_FLOAT32_MAX;
+        samplerDesc.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+        CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC rootSignatureDesc;
+        rootSignatureDesc.Init_1_1(_countof(rootParameters), rootParameters, 1, &samplerDesc, rootSignatureFlags);
+        ComPtr<ID3DBlob> signature;
+        ThrowIfFailed(D3D12SerializeVersionedRootSignature(&rootSignatureDesc, &signature, nullptr), "D3D12SerializeVersionedRootSignature for vector field");
+        ThrowIfFailed(device_->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&vectorFieldRootSignature_)), "CreateRootSignature for vector field");
+    }
+
+    void CreateVectorFieldPipelineState()
+    {
+        D3D12_INPUT_ELEMENT_DESC inputElementDesc[] =
+        {
+            { "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+            { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 8, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+        };
+        D3D12_INPUT_LAYOUT_DESC inputLayoutDesc{ inputElementDesc, _countof(inputElementDesc) };
     }
 
     void FlushCommandQueue()
@@ -538,7 +612,7 @@ CREATE_SKETCH(DemoBlob,
     {
         config.Width = 800;
         config.Height = 450;
-        config.Vsync = false;
+        //config.Vsync = false;
         config.WindowModeSwitch = true;
         //config.Fullscreen = true;
     }

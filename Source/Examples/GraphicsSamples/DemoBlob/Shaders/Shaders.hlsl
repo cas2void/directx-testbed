@@ -23,11 +23,11 @@ struct PSInput
 	float2 uv : TEXCOORD0;
 };
 
-PSInput VSMain(float4 position : POSITION, float4 color : COLOR, float2 uv : TEXCOORD0)
+PSInput VSMain(float2 position : POSITION, float4 color : COLOR, float2 uv : TEXCOORD0)
 {
 	PSInput result;
 
-	result.position = position;
+	result.position = float4(position, 0, 1);
 	result.color = color;
 	result.uv = uv;
 	return result;
@@ -35,6 +35,8 @@ PSInput VSMain(float4 position : POSITION, float4 color : COLOR, float2 uv : TEX
 
 float4 PSMain(PSInput input) : SV_TARGET
 {
-	float dist = 1 - smoothstep(0.1 * float2(aspect, 1), 0.12 * float2(aspect, 1), min(distance(offset, input.uv), 1));
-	return float4(dist, dist, dist, 0);
+	float2 uvStretch = float2(aspect, 1);
+	float dist = min(distance(offset * uvStretch, input.uv * uvStretch), 1);
+	float col = 1 - smoothstep(0.1, 0.12, dist);
+	return float4(col, col, col, 0);
 }
