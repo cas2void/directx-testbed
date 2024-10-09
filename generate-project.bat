@@ -1,0 +1,1 @@
+cmake -Bcmake-build -DBUILD_SHARED_LIBS=TRUE -S.
