@@ -5,10 +5,8 @@
 
 namespace
 {
-RECT GetFullscreenRect(const HWND window)
+RECT GetFullscreenRect()
 {
-    SetWindowLong(window, GWL_STYLE, WS_OVERLAPPED);
-
     DEVMODE dev_mode = {};
     dev_mode.dmSize = sizeof(DEVMODE);
     EnumDisplaySettings(nullptr, ENUM_CURRENT_SETTINGS, &dev_mode);
@@ -50,22 +48,16 @@ HWND Launcher::main_window_;
 void Launcher::ToggleFullscreen()
 {
     static auto fullscreen = sketch_instance_->GetConfig().fullscreen;
-    static RECT window_mode_rect = {
-        static_cast<LONG>(sketch_instance_->GetConfig().x),
-        static_cast<LONG>(sketch_instance_->GetConfig().y),
-        static_cast<LONG>(sketch_instance_->GetConfig().x + sketch_instance_->GetConfig().width),
-        static_cast<LONG>(sketch_instance_->GetConfig().y + sketch_instance_->GetConfig().height)
-    };
 
     fullscreen = !fullscreen;
 
     int cmd_show = SW_SHOWDEFAULT;
-    auto current_rect = window_mode_rect;
+    RECT current_rect;
+    GetWindowRect(main_window_, &current_rect);
+    
     if (fullscreen)
     {
-        GetWindowRect(main_window_, &window_mode_rect);
-
-        current_rect = GetFullscreenRect(main_window_);
+        current_rect = GetFullscreenRect();
         cmd_show = SW_MAXIMIZE;
 
         SetWindowLong(main_window_, GWL_STYLE, WS_OVERLAPPED);
@@ -105,6 +97,8 @@ void Launcher::Run(const std::string& sketch_name)
 {
     sketch_instance_->Configure();
 
+    SetProcessDPIAware();
+
     const HINSTANCE hInstance = GetModuleHandleW(nullptr);
 
     WNDCLASSEXW window_class;
@@ -123,33 +117,42 @@ void Launcher::Run(const std::string& sketch_name)
 
     RegisterClassExW(&window_class);
 
-    RECT rc = {
-        static_cast<LONG>(sketch_instance_->GetConfig().x),
-        static_cast<LONG>(sketch_instance_->GetConfig().y),
-        static_cast<LONG>(sketch_instance_->GetConfig().x + sketch_instance_->GetConfig().width),
-        static_cast<LONG>(sketch_instance_->GetConfig().y + sketch_instance_->GetConfig().height)
-    };
+    const auto& config = sketch_instance_->GetConfig();
+    const auto [screen_left, screen_top, screen_right, screen_bottom] = GetFullscreenRect();
+    const auto fullscreen_width = screen_right - screen_left;
+    const auto fullscreen_height = screen_bottom - screen_top;
+
+    const auto valid_width = config.width > 0 ? config.width : fullscreen_width / 2;
+    const auto valid_height = config.height > 0 ? config.height : fullscreen_height / 2;
+    const auto valid_x = config.x >= 0 ? config.x : (fullscreen_width - valid_width) / 2;
+    const auto valid_y = config.y >= 0 ? config.y : (fullscreen_height - valid_height) / 2;
+
+    RECT valid_window_rect = {valid_x, valid_y, valid_x + valid_width, valid_y + valid_height};
+    
     constexpr DWORD style = WS_OVERLAPPEDWINDOW;
-    AdjustWindowRect(&rc, style, FALSE);
+    AdjustWindowRect(&valid_window_rect, style, FALSE);
+
+    const auto adjusted_width = valid_window_rect.right - valid_window_rect.left;
+    const auto adjusted_height = valid_window_rect.bottom - valid_window_rect.top;
 
     const auto sketch_name_wide = ConvertNarrowStringToWideString(sketch_name);
     main_window_ = CreateWindowW(window_class.lpszClassName,
                                  sketch_name_wide.c_str(),
                                  style,
-                                 rc.left,
-                                 rc.top,
-                                 rc.right - rc.left,
-                                 rc.bottom - rc.top,
+                                 valid_x,
+                                 valid_y,
+                                 adjusted_width,
+                                 adjusted_height,
                                  nullptr,
                                  nullptr,
                                  hInstance,
                                  nullptr);
 
     int cmd_show = SW_SHOWDEFAULT;
-    if (sketch_instance_->GetConfig().fullscreen)
+    if (config.fullscreen)
     {
         SetWindowLong(main_window_, GWL_STYLE, WS_OVERLAPPED);
-        const auto [left, top, right, bottom] = GetFullscreenRect(main_window_);
+        const auto [left, top, right, bottom] = GetFullscreenRect();
         SetWindowPos(main_window_,
                      nullptr,
                      left,
@@ -224,7 +227,11 @@ LRESULT Launcher::WndProc(const HWND wnd, const UINT message, const WPARAM w_par
                         sleeping = false;
                         sketch_instance_->Resume();
                     }
-                    sketch_instance_->Resize(LOWORD(l_param), HIWORD(l_param));
+
+                    RECT rc;
+                    GetClientRect(wnd, &rc);
+                    sketch_instance_->Resize(static_cast<int>(rc.right - rc.left),
+                                             static_cast<int>(rc.bottom - rc.top));
                 }
                 break;
 
@@ -253,25 +260,25 @@ LRESULT Launcher::WndProc(const HWND wnd, const UINT message, const WPARAM w_par
 
     case WM_LBUTTONDOWN:
         {
-            sketch_instance_->MouseDown(GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param), engine::MouseButtonType::kLeft);
+            sketch_instance_->MouseDown(GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param), MouseButtonType::kLeft);
         }
         break;
 
     case WM_LBUTTONUP:
         {
-            sketch_instance_->MouseUp(GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param), engine::MouseButtonType::kLeft);
+            sketch_instance_->MouseUp(GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param), MouseButtonType::kLeft);
         }
         break;
 
     case WM_RBUTTONDOWN:
         {
-            sketch_instance_->MouseDown(GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param), engine::MouseButtonType::kRight);
+            sketch_instance_->MouseDown(GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param), MouseButtonType::kRight);
         }
         break;
 
     case WM_RBUTTONUP:
         {
-            sketch_instance_->MouseUp(GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param), engine::MouseButtonType::kRight);
+            sketch_instance_->MouseUp(GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param), MouseButtonType::kRight);
         }
         break;
 
@@ -281,11 +288,11 @@ LRESULT Launcher::WndProc(const HWND wnd, const UINT message, const WPARAM w_par
             const auto y = GET_Y_LPARAM(l_param);
             if (static_cast<DWORD>(w_param) & MK_LBUTTON)
             {
-                sketch_instance_->MouseDrag(x, y, engine::MouseButtonType::kLeft);
+                sketch_instance_->MouseDrag(x, y, MouseButtonType::kLeft);
             }
             else if (static_cast<DWORD>(w_param) & MK_RBUTTON)
             {
-                sketch_instance_->MouseDrag(x, y, engine::MouseButtonType::kRight);
+                sketch_instance_->MouseDrag(x, y, MouseButtonType::kRight);
             }
             else
             {
