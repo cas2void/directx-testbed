@@ -10,3 +10,7 @@ target_sources(${TARGET_NAME} PRIVATE
 target_include_directories(${TARGET_NAME} PUBLIC 
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+
+# 第三方库
+add_subdirectory(third-party/DirectX-Headers)
+target_link_libraries(${TARGET_NAME} PUBLIC DirectX-Headers)

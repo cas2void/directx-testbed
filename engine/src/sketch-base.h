@@ -1,10 +1,11 @@
 #pragma once
 
+#include <cstdint>
 #include <chrono>
 
 namespace engine
 {
-enum class MouseButtonType
+enum class MouseButtonType : std::int8_t
 {
     kLeft,
     kRight
